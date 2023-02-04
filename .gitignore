@@ -170,3 +170,6 @@ vgcore.*
 .pytest_cache/
 test/*.log
 *.code-workspace
+
+# traceshark
+research/

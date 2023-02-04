@@ -90,6 +90,7 @@
 #include "busmaster.h"
 #include "blf.h"
 #include "eri_enb_log.h"
+#include "trace-cmd.h"
 
 
 /*
@@ -166,6 +167,7 @@ static const struct file_extension_info file_type_extensions_base[] = {
 	{ "JPEG/JFIF files", FALSE, "jpg;jpeg;jfif" },
 	{ "JavaScript Object Notation file", FALSE, "json" },
 	{ "MP4 file", FALSE, "mp4" },
+	{ "Ftrace trace-cmd", TRUE, "dat" },
 };
 
 #define	N_FILE_TYPE_EXTENSIONS	(sizeof file_type_extensions_base / sizeof file_type_extensions_base[0])
@@ -449,6 +451,7 @@ static const struct open_info open_info_base[] = {
 	{ "Ruby Marshal Object",                    OPEN_INFO_HEURISTIC, ruby_marshal_open,        "",         NULL, NULL },
 	{ "3gpp phone log",                         OPEN_INFO_MAGIC,     log3gpp_open,             "log",      NULL, NULL },
 	{ "MP4 media file",                         OPEN_INFO_MAGIC,     mp4_open,                 "mp4",      NULL, NULL },
+	{ "Ftrace trace-cmd",           			OPEN_INFO_MAGIC,     tracecmd_open,            "dat",      NULL, NULL },
 
 };
 
