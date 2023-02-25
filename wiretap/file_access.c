@@ -136,6 +136,7 @@ add_extensions(GSList *extensions, const gchar *extension,
 static const struct file_extension_info file_type_extensions_base[] = {
 	{ "Wireshark/tcpdump/... - pcap", TRUE, "pcap;cap;dmp" },
 	{ "Wireshark/... - pcapng", TRUE, "pcapng;ntar" },
+    { "Ftrace trace-cmd", TRUE, "dat" },
 	{ "Network Monitor, Surveyor, NetScaler", TRUE, "cap" },
 	{ "InfoVista 5View capture", TRUE, "5vw" },
 	{ "Sniffer (DOS)", TRUE, "cap;enc;trc;fdc;syc" },
@@ -167,7 +168,6 @@ static const struct file_extension_info file_type_extensions_base[] = {
 	{ "JPEG/JFIF files", FALSE, "jpg;jpeg;jfif" },
 	{ "JavaScript Object Notation file", FALSE, "json" },
 	{ "MP4 file", FALSE, "mp4" },
-	{ "Ftrace trace-cmd", TRUE, "dat" },
 };
 
 #define	N_FILE_TYPE_EXTENSIONS	(sizeof file_type_extensions_base / sizeof file_type_extensions_base[0])
@@ -366,6 +366,7 @@ wtap_get_all_capture_file_extensions_list(void)
 static const struct open_info open_info_base[] = {
 	{ "Wireshark/tcpdump/... - pcap",           OPEN_INFO_MAGIC,     libpcap_open,             "pcap",     NULL, NULL },
 	{ "Wireshark/... - pcapng",                 OPEN_INFO_MAGIC,     pcapng_open,              "pcapng",   NULL, NULL },
+    { "Ftrace trace-cmd",           			OPEN_INFO_MAGIC,     tracecmd_open,            "dat",      NULL, NULL },
 	{ "Sniffer (DOS)",                          OPEN_INFO_MAGIC,     ngsniffer_open,           NULL,       NULL, NULL },
 	{ "Snoop, Shomiti/Finisar Surveyor",        OPEN_INFO_MAGIC,     snoop_open,               NULL,       NULL, NULL },
 	{ "AIX iptrace",                            OPEN_INFO_MAGIC,     iptrace_open,             NULL,       NULL, NULL },
@@ -451,8 +452,6 @@ static const struct open_info open_info_base[] = {
 	{ "Ruby Marshal Object",                    OPEN_INFO_HEURISTIC, ruby_marshal_open,        "",         NULL, NULL },
 	{ "3gpp phone log",                         OPEN_INFO_MAGIC,     log3gpp_open,             "log",      NULL, NULL },
 	{ "MP4 media file",                         OPEN_INFO_MAGIC,     mp4_open,                 "mp4",      NULL, NULL },
-	{ "Ftrace trace-cmd",           			OPEN_INFO_MAGIC,     tracecmd_open,            "dat",      NULL, NULL },
-
 };
 
 /* this is only used to build the dynamic array on load, do NOT use this
