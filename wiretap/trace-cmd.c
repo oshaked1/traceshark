@@ -1,9 +1,31 @@
 #include "wtap-int.h"
 #include "file_wrappers.h"
 
+#define MAX_EVENT 65535
+#define MAX_UINT32 4294967295
+
 static const unsigned char tracecmd_magic[3] = { 0x17, 0x08, 0x44 };
 
 static int tracecmd_file_type_subtype = -1;
+
+struct field {
+    struct field *next;
+    gchar *type;
+    gboolean is_array;
+    gchar *name;
+    guint32 length;
+    gchar *length_expression;
+    guint32 offset;
+    guint32 size;
+    guint32 is_signed;
+};
+
+struct event_format {
+    gchar *system, *name;
+    guint16 id;
+    struct field *fields;
+    gchar *print_fmt;
+};
 
 struct cpu_data {
     guint64 offset;
@@ -20,6 +42,7 @@ struct tracecmd {
     gboolean big_endian;
     int long_size;
     guint32 page_size;
+    struct event_format *event_formats[MAX_EVENT + 1];
     guint32 num_cpus;
     struct cpu_data *cpu_data;
     struct rb_iter_state state;
@@ -234,16 +257,226 @@ read_error:
     return FALSE;
 }
 
+void tracecmd_free_event_format(struct event_format *format)
+{
+    struct field *curr, *next;
+
+    if (!format)
+        return;
+    
+    if (format->name)
+        g_free(format->name);
+    
+    if (format->print_fmt)
+        g_free(format->print_fmt);
+    
+    if (!format->fields)
+        return;
+    
+    curr = format->fields;
+    while (curr) {
+        g_free(curr->type);
+        g_free(curr->name);
+        if (curr->length_expression)
+            g_free(curr->length_expression);
+        next = curr->next;
+        g_free(curr);
+        curr = next;
+    }
+}
+
+/**
+ * An event format looks like this:
+ * 
+ * ====================================================================================================
+ * name: sched_wakeup
+ * ID: 320
+ * format:
+ *  	field:unsigned short common_type;	offset:0;	size:2;	signed:0;
+ *  	field:unsigned char common_flags;	offset:2;	size:1;	signed:0;
+ *  	field:unsigned char common_preempt_count;	offset:3;	size:1;	signed:0;
+ *  	field:int common_pid;	offset:4;	size:4;	signed:1;
+ *
+ *  	field:char comm[16];	offset:8;	size:16;	signed:1;
+ *  	field:pid_t pid;	offset:24;	size:4;	signed:1;
+ *  	field:int prio;	offset:28;	size:4;	signed:1;
+ *  	field:int target_cpu;	offset:32;	size:4;	signed:1;
+ *
+ * print fmt: "comm=%s pid=%d prio=%d target_cpu=%03d", REC->comm, REC->pid, REC->prio, REC->target_cpu
+ * ====================================================================================================
+ * 
+ * To parse this, we divide it into lines. We check each line for a keyword
+ * to determine what it contains, and parse it accordingly.
+*/
+static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *format_str, struct tracecmd *tracecmd)
+{
+    gboolean res = FALSE;
+    const int max_lines = 100; /* sensible limit */
+    gchar **lines = g_strsplit(format_str, "\n", max_lines);
+    gchar **parts;
+    gchar *tmp_str = NULL;
+    guint64 tmp_int;
+    gchar *tmp_length_expr;
+
+    struct event_format *format = g_new0(struct event_format, 1);
+    format->system = g_strdup(system);
+    struct field *field = NULL, *tmp_field;
+
+    const char field_regex[] = "field\\:(.+)\\s((\\w+)(\\[(.*)\\]){0,1});\\s+offset\\:(\\d+);\\s+size\\:(\\d+);\\s+signed\\:(\\d+);";
+    GRegex *regex = g_regex_new((const gchar *)&field_regex, 0, 0, NULL);
+    if (!regex)
+        goto cleanup;
+    GMatchInfo *match_info = NULL;
+
+    for (int i = 0; i < max_lines; i++) {
+        // array null-terminator
+        if (lines[i] == NULL)
+            break;
+        
+        // first line should be the event name
+        if (i == 0) {
+            if (!g_strstr_len(lines[i], -1, "name:"))
+                goto cleanup;
+            parts = g_strsplit(lines[i], " ", 2);
+            format->name = g_strdup(parts[1]);
+            g_strfreev(parts);
+        }
+
+        // second line should be the event ID
+        else if (i == 1) {
+            if (!g_strstr_len(lines[i], -1, "ID:"))
+                goto cleanup;
+            parts = g_strsplit(lines[i], " ", 2);
+            tmp_str = g_strdup(parts[1]);
+            g_strfreev(parts);
+            if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_EVENT, &tmp_int, NULL))
+                goto cleanup;
+            format->id = (guint16)tmp_int;
+            ws_noisy("parsing event ID %u (%s/%s)", format->id, format->system, format->name);
+            g_free(tmp_str);
+            tmp_str = NULL;
+
+            // now that we know the ID we can place the event into the list
+            tracecmd->event_formats[format->id] = format;
+        }
+
+        // third line should be "format:"
+        else if (i == 2) {
+            if (!g_strstr_len(lines[i], -1, "format:"))
+                goto cleanup;
+        }
+
+        else {
+            // last line is print format
+            if (g_strstr_len(lines[i], -1, "print fmt:")) {
+                format->print_fmt = g_strdup((const gchar *)lines[i] + strlen("print fmt: "));
+                break;
+            }
+
+            // field line
+            if (g_strstr_len(lines[i], -1, "field:")) {
+                field = g_new0(struct field, 1);
+                if (g_regex_match(regex, lines[i], 0, &match_info)) {
+                    field->type = g_match_info_fetch(match_info, 1);
+                    field->name = g_match_info_fetch(match_info, 3);
+
+                    tmp_str = g_match_info_fetch(match_info, 4);
+                    field->is_array = strlen(tmp_str) > 0;
+                    g_free(tmp_str);
+                    tmp_str = NULL;
+
+                    tmp_str = g_match_info_fetch(match_info, 5);
+                    // length is not always present
+                    if (strlen(tmp_str) > 0) {
+                        if (g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_UINT32, &tmp_int, NULL))
+                            field->length = (guint32)tmp_int;
+                        // length may have an expression instead of a number
+                        else
+                            field->length_expression = g_strdup(tmp_str);
+                    }
+                    g_free(tmp_str);
+                    tmp_str = NULL;
+
+                    tmp_str = g_match_info_fetch(match_info, 6);
+                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_UINT32, &tmp_int, NULL))
+                        goto cleanup;
+                    field->offset = (guint32)tmp_int;
+                    g_free(tmp_str);
+                    tmp_str = NULL;
+
+                    tmp_str = g_match_info_fetch(match_info, 7);
+                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_UINT32, &tmp_int, NULL))
+                        goto cleanup;
+                    field->size = (guint32)tmp_int;
+                    g_free(tmp_str);
+                    tmp_str = NULL;
+
+                    tmp_str = g_match_info_fetch(match_info, 8);
+                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_UINT32, &tmp_int, NULL))
+                        goto cleanup;
+                    field->is_signed = (guint32)tmp_int;
+                    g_free(tmp_str);
+                    tmp_str = NULL;
+
+                    tmp_length_expr = field->length_expression == NULL? "(null)" : field->length_expression;
+                    ws_noisy("type=%s is_array=%u name=%s length=%u length_expr=%s offset=%u size=%u signed=%u", field->type, field->is_array, field->name, field->length, tmp_length_expr, field->offset, field->size, field->is_signed);
+
+                    g_match_info_free(match_info);
+                    match_info = NULL;
+
+                    // link field into list of fields
+                    if (!format->fields)
+                        format->fields = field;
+                    else {
+                        tmp_field = format->fields;
+                        while (tmp_field->next)
+                            tmp_field = tmp_field->next;
+                        tmp_field->next = field;
+                    }
+                }
+                else
+                    goto cleanup;
+            }
+        }
+    }
+
+    // make sure print format was encountered
+    if (!format->print_fmt)
+        goto cleanup;
+
+    res = TRUE;
+
+cleanup:
+    g_free(tmp_str);
+    g_strfreev(lines);
+
+    if (regex)
+        g_regex_unref(regex);
+    
+    if (match_info)
+        g_match_info_free(match_info);
+    
+    if (format && res == FALSE) {
+        tracecmd->event_formats[format->id] = NULL;
+        tracecmd_free_event_format(format);
+    }
+
+    return res;
+}
+
 static gboolean tracecmd_parse_ftrace_events(FILE_T fh, struct tracecmd *tracecmd, int *err, gchar **err_info)
 {
     char buf[sizeof(guint64)];
     guint32 num_events;
     guint64 event_format_len;
+    gchar *event_format = NULL;
 
     // next 4 bytes hold the number of ftrace event formats stored in the file
     if (!wtap_read_bytes(fh, &buf, sizeof(guint32), err, err_info))
         return FALSE;
     num_events = tracecmd->big_endian ? pntoh32(buf) : pletoh32(buf);
+
+    ws_debug("parsing %u ftrace events", num_events);
 
     // execute for each event format in the file
     while (num_events-- > 0) {
@@ -252,10 +485,22 @@ static gboolean tracecmd_parse_ftrace_events(FILE_T fh, struct tracecmd *tracecm
             return FALSE;
         event_format_len = tracecmd->big_endian ? pntoh64(buf) : pletoh64(buf);
 
-        // Following is the event format.
-        // We currently don't parse it, so we discard it.
-        if (!wtap_read_bytes(fh, NULL, event_format_len, err, err_info))
+        // following is the event format
+        event_format = (gchar *)g_malloc(event_format_len + 1);
+        if (!wtap_read_bytes(fh, event_format, event_format_len, err, err_info)) {
+            g_free(event_format);
             return FALSE;
+        }
+        // add a null-terminator
+        event_format[event_format_len] = 0;
+
+        // parse the format
+        if (!tracecmd_parse_event_format("ftrace", event_format, tracecmd)) {
+            g_free(event_format);
+            *err = WTAP_ERR_BAD_FILE;
+            return FALSE;
+        }
+        g_free(event_format);
     }
 
     return TRUE;
@@ -266,24 +511,30 @@ static gboolean tracecmd_parse_events(FILE_T fh, struct tracecmd *tracecmd, int 
     char buf[sizeof(guint64)];
     guint32 num_systems, num_events;
     guint64 event_format_len;
-    gchar *system_name = NULL;
+    gchar *system_name = NULL, *event_format = NULL;
 
     // next 4 bytes hold the number of event systems stored in the file
     if (!wtap_read_bytes(fh, &buf, sizeof(guint32), err, err_info))
         return FALSE;
     num_systems = tracecmd->big_endian ? pntoh32(buf) : pletoh32(buf);
 
+    ws_debug("parsing %u event systems", num_systems);
+
     // execute for each event system in the file
     while (num_systems-- > 0) {
         // next comes the (null-terminated) name of the system
         system_name = file_gets_null_terminated(fh, 0);
-        if (!system_name)
-            goto read_error;
+        if (!system_name) {
+            *err = WTAP_ERR_SHORT_READ;
+            goto error_cleanup;
+        }
         
         // next 4 bytes hold the number of events in this system
         if (!wtap_read_bytes(fh, &buf, sizeof(guint32), err, err_info))
             goto error_cleanup;
         num_events = tracecmd->big_endian ? pntoh32(buf) : pletoh32(buf);
+
+        ws_debug("parsing %u %s events", num_events, system_name);
 
         // execute for each event in the system
         while (num_events-- > 0) {
@@ -292,10 +543,20 @@ static gboolean tracecmd_parse_events(FILE_T fh, struct tracecmd *tracecmd, int 
                 goto error_cleanup;
             event_format_len = tracecmd->big_endian ? pntoh64(buf) : pletoh64(buf);
 
-            // Following is the event format.
-            // We currently don't parse it, so we discard it.
-            if (!wtap_read_bytes(fh, NULL, event_format_len, err, err_info))
+            // following is the event format
+            event_format = (gchar *)g_malloc(event_format_len + 1);
+            if (!wtap_read_bytes(fh, event_format, event_format_len, err, err_info))
                 goto error_cleanup;
+            // add a null-terminator
+            event_format[event_format_len] = 0;
+
+            // parse the format
+            if (!tracecmd_parse_event_format(system_name, event_format, tracecmd)) {
+                *err = WTAP_ERR_BAD_FILE;
+                goto error_cleanup;
+            }
+            g_free(event_format);
+            event_format = NULL;
         }
 
         g_free(system_name);
@@ -304,12 +565,9 @@ static gboolean tracecmd_parse_events(FILE_T fh, struct tracecmd *tracecmd, int 
 
     return TRUE;
 
-read_error:
-    *err = WTAP_ERR_SHORT_READ;
-    goto error_cleanup;
-
 error_cleanup:
     g_free(system_name);
+    g_free(event_format);
     return FALSE;
 }
 
@@ -773,6 +1031,11 @@ static gboolean tracecmd_seek_read(wtap *wth, gint64 seek_off, wtap_rec *rec, Bu
 static void tracecmd_close(wtap *wth)
 {
     struct tracecmd *tracecmd = (struct tracecmd *)wth->priv;
+
+    for (int i = 0; i <= MAX_EVENT; i++) {
+        if (tracecmd->event_formats[i])
+            tracecmd_free_event_format(tracecmd->event_formats[i]);
+    }
 
     g_free(tracecmd->cpu_data);
     g_hash_table_destroy(tracecmd->events);
