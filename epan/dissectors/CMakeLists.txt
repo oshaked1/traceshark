@@ -1387,6 +1387,7 @@ set(DISSECTOR_SRC
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-lge_monitor.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-link16.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-lin.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/packet-linux-trace-event.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-linx.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-lisp-data.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-lisp-tcp.c
