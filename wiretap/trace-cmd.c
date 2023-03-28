@@ -228,7 +228,7 @@ static gboolean tracecmd_parse_header_info(FILE_T fh, struct tracecmd *tracecmd,
     // taken from /sys/kernel/debug/tracing/events/header_page.
     // We currently have no use for it so we discard it.
     // TODO: make sure there were no changes made to the format.
-    if (!wtap_read_bytes(fh, NULL, header_page_len, err, err_info))
+    if (!wtap_read_bytes(fh, NULL, (unsigned int)header_page_len, err, err_info))
         return FALSE;
     
     // the next 13 bytes should be "header_event\0"
@@ -250,7 +250,7 @@ static gboolean tracecmd_parse_header_info(FILE_T fh, struct tracecmd *tracecmd,
     // taken from /sys/kernel/debug/tracing/events/header_event.
     // We currently have no use for it so we discard it.
     // TODO: make sure there were no changes made to the format.
-    if (!wtap_read_bytes(fh, NULL, header_event_len, err, err_info))
+    if (!wtap_read_bytes(fh, NULL, (unsigned int)header_event_len, err, err_info))
         return FALSE;
     
     return TRUE;
@@ -494,7 +494,7 @@ static gboolean tracecmd_parse_ftrace_events(FILE_T fh, struct tracecmd *tracecm
 
         // following is the event format
         event_format = (gchar *)g_malloc(event_format_len + 1);
-        if (!wtap_read_bytes(fh, event_format, event_format_len, err, err_info)) {
+        if (!wtap_read_bytes(fh, event_format, (unsigned int)event_format_len, err, err_info)) {
             g_free(event_format);
             return FALSE;
         }
@@ -552,7 +552,7 @@ static gboolean tracecmd_parse_events(FILE_T fh, struct tracecmd *tracecmd, int 
 
             // following is the event format
             event_format = (gchar *)g_malloc(event_format_len + 1);
-            if (!wtap_read_bytes(fh, event_format, event_format_len, err, err_info))
+            if (!wtap_read_bytes(fh, event_format, (unsigned int)event_format_len, err, err_info))
                 goto error_cleanup;
             // add a null-terminator
             event_format[event_format_len] = 0;
@@ -626,7 +626,7 @@ static gboolean tracecmd_parse_process_info(FILE_T fh, struct tracecmd *tracecmd
 
     // Following is the process information that maps PIDs to command lines.
     // We currently don't parse it, so we discard it.
-    if (!wtap_read_bytes(fh, NULL, process_info_len, err, err_info))
+    if (!wtap_read_bytes(fh, NULL, (unsigned int)process_info_len, err, err_info))
         return FALSE;
     
     return TRUE;
