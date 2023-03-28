@@ -173,3 +173,7 @@ test/*.log
 
 # traceshark
 research/
+prepare_build.bat
+build.bat
+run.bat
+repair_build.bat

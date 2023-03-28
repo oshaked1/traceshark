@@ -1,5 +1,7 @@
 #include <epan/packet.h>
 
+#include <wiretap/trace-cmd.h>
+
 static int proto_linux_trace_event = -1;
 
 static int
@@ -26,5 +28,5 @@ proto_reg_handoff_linux_trace_event(void)
     static dissector_handle_t linux_trace_event_handle;
 
     linux_trace_event_handle = create_dissector_handle(dissect_linux_trace_event, proto_linux_trace_event);
-    dissector_add_uint("wtap_encap", WTAP_ENCAP_LINUX_TRACE_EVENT, linux_trace_event_handle);
+    dissector_add_uint("wtap_fts_rec", tracecmd_get_file_type_subtype(), linux_trace_event_handle);
 }

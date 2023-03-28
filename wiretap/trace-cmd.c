@@ -1,3 +1,5 @@
+#include "trace-cmd.h"
+
 #include "wtap-int.h"
 #include "file_wrappers.h"
 
@@ -7,6 +9,11 @@
 static const unsigned char tracecmd_magic[3] = { 0x17, 0x08, 0x44 };
 
 static int tracecmd_file_type_subtype = -1;
+
+int tracecmd_get_file_type_subtype(void)
+{
+    return tracecmd_file_type_subtype;
+}
 
 struct field {
     struct field *next;
@@ -971,14 +978,13 @@ static gboolean tracecmd_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err, g
         goto error;
     
     // set up metadata
-    rec->rec_header.packet_header.caplen = event_info->size;
-    rec->rec_header.packet_header.len = event_info->size;
-    rec->rec_header.packet_header.interface_id = event_info->cpu;
+    rec->rec_type = REC_TYPE_FT_SPECIFIC_EVENT;
+    rec->rec_header.ft_specific_header.record_type = 0;
+    rec->rec_header.ft_specific_header.record_len = event_info->size;
     rec->ts.secs = (time_t)(event_info->ts / 1000000000);
-	rec->ts.nsecs = (int)(event_info->ts % 1000000000);
-	rec->presence_flags = WTAP_HAS_TS | WTAP_HAS_INTERFACE_ID;
-    rec->block = wtap_block_create(WTAP_BLOCK_PACKET);
-    rec->rec_type = REC_TYPE_PACKET;
+    rec->ts.nsecs = (int)(event_info->ts % 1000000000);
+    rec->presence_flags = WTAP_HAS_TS;
+
     *data_offset = event_info->offset;
 
     // insert event info into map
@@ -1011,14 +1017,12 @@ static gboolean tracecmd_seek_read(wtap *wth, gint64 seek_off, wtap_rec *rec, Bu
         return FALSE;
     
     // set up metadata
-    rec->rec_header.packet_header.caplen = event_info->size;
-    rec->rec_header.packet_header.len = event_info->size;
-    rec->rec_header.packet_header.interface_id = event_info->cpu;
+    rec->rec_type = REC_TYPE_FT_SPECIFIC_EVENT;
+    rec->rec_header.ft_specific_header.record_type = 0;
+    rec->rec_header.ft_specific_header.record_len = event_info->size;
     rec->ts.secs = (time_t)(event_info->ts / 1000000000);
-	rec->ts.nsecs = (int)(event_info->ts % 1000000000);
-	rec->presence_flags = WTAP_HAS_TS | WTAP_HAS_INTERFACE_ID;
-    rec->block = wtap_block_create(WTAP_BLOCK_PACKET);
-    rec->rec_type = REC_TYPE_PACKET;
+    rec->ts.nsecs = (int)(event_info->ts % 1000000000);
+    rec->presence_flags = WTAP_HAS_TS;
 
     return TRUE;
 }
@@ -1076,7 +1080,7 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
     wth->subtype_read = tracecmd_read;
     wth->subtype_seek_read = tracecmd_seek_read;
     wth->subtype_close = tracecmd_close;
-    wth->file_encap = WTAP_ENCAP_LINUX_TRACE_EVENT;
+    wth->file_encap = WTAP_ENCAP_UNKNOWN;
     wth->file_tsprec = WTAP_TSPREC_NSEC;
     wth->snapshot_length = 0;
     wth->priv = tracecmd;
@@ -1084,10 +1088,11 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
     return WTAP_OPEN_MINE;
 }
 
+/*
+ * Wiretap doesn't allow us to have a file type that doesn't support any blocks.
+ * We indicate support for packet blocks even though we make no use of them.
+ */
 static const struct supported_block_type tracecmd_blocks_supported[] = {
-    /*
-     * We support packet blocks, with no comments or other options.
-     */
     { WTAP_BLOCK_PACKET, MULTIPLE_BLOCKS_SUPPORTED, NO_OPTIONS_SUPPORTED }
 };
 

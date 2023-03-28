@@ -294,9 +294,6 @@ extern "C" {
 #define WTAP_ENCAP_USB_2_0_FULL_SPEED           216
 #define WTAP_ENCAP_USB_2_0_HIGH_SPEED           217
 
-/* Custom Traceshark encapsulations */
-#define WTAP_ENCAP_LINUX_TRACE_EVENT               218
-
 /* After adding new item here, please also add new item to encap_table_base array */
 
 #define WTAP_NUM_ENCAP_TYPES                    wtap_get_num_encap_types()
