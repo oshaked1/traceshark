@@ -152,6 +152,7 @@ set(LIBWIRESHARK_PUBLIC_HEADERS
 	timestats.h
 	tfs.h
 	to_str.h
+    traceshark.h
 	tvbparse.h
 	tvbuff.h
 	tvbuff-int.h
@@ -200,6 +201,7 @@ set(LIBWIRESHARK_NONGENERATED_FILES
 	export_object.c
 	exported_pdu.c
 	filter_expressions.c
+    find_subtree.c
 	follow.c
 	frame_data.c
 	frame_data_sequence.c
@@ -245,6 +247,7 @@ set(LIBWIRESHARK_NONGENERATED_FILES
 	timestats.c
 	tfs.c
 	to_str.c
+    traceshark.c
 	tvbparse.c
 	tvbuff.c
 	tvbuff_base64.c

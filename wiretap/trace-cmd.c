@@ -1,5 +1,6 @@
 #include "trace-cmd.h"
 
+#include "traceshark.h"
 #include "wtap-int.h"
 #include "file_wrappers.h"
 
@@ -909,6 +910,26 @@ static inline enum get_record_result __tracecmd_get_record(FILE_T fh, struct tra
     }
 }
 
+static void set_rec_metadata(struct tracecmd *tracecmd, wtap_rec *rec, struct event_info *event_info)
+{
+    struct event_options *options;
+
+    rec->rec_type = REC_TYPE_FT_SPECIFIC_EVENT;
+    rec->rec_header.ft_specific_header.record_type = 0;
+    rec->rec_header.ft_specific_header.record_len = event_info->size;
+    rec->ts.secs = (time_t)(event_info->ts / 1000000000);
+    rec->ts.nsecs = (int)(event_info->ts % 1000000000);
+    rec->presence_flags = WTAP_HAS_TS;
+
+    ws_buffer_assure_space(&rec->options_buf, sizeof(struct event_options));
+    options = (struct event_options *)ws_buffer_start_ptr(&rec->options_buf);
+    memset(options, 0, sizeof(*options));
+    options->machine_id = 0; // trace-cmd files contain events from a single system
+    options->event_type = EVENT_TYPE_LINUX_TRACE_EVENT;
+    options->type_specific_options.linux_trace_event.big_endian = tracecmd->big_endian;
+    options->type_specific_options.linux_trace_event.cpu = event_info->cpu;
+}
+
 /**
  * Read the next event from the file.
  * Each CPU has it's own set of events,
@@ -977,14 +998,7 @@ static gboolean tracecmd_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err, g
     if (!wtap_read_bytes(wth->fh, ws_buffer_start_ptr(buf), event_info->size, err, err_info))
         goto error;
     
-    // set up metadata
-    rec->rec_type = REC_TYPE_FT_SPECIFIC_EVENT;
-    rec->rec_header.ft_specific_header.record_type = 0;
-    rec->rec_header.ft_specific_header.record_len = event_info->size;
-    rec->ts.secs = (time_t)(event_info->ts / 1000000000);
-    rec->ts.nsecs = (int)(event_info->ts % 1000000000);
-    rec->presence_flags = WTAP_HAS_TS;
-
+    set_rec_metadata(tracecmd, rec, event_info);
     *data_offset = event_info->offset;
 
     // insert event info into map
@@ -1016,13 +1030,7 @@ static gboolean tracecmd_seek_read(wtap *wth, gint64 seek_off, wtap_rec *rec, Bu
     if (!wtap_read_bytes(wth->random_fh, ws_buffer_start_ptr(buf), event_info->size, err, err_info))
         return FALSE;
     
-    // set up metadata
-    rec->rec_type = REC_TYPE_FT_SPECIFIC_EVENT;
-    rec->rec_header.ft_specific_header.record_type = 0;
-    rec->rec_header.ft_specific_header.record_len = event_info->size;
-    rec->ts.secs = (time_t)(event_info->ts / 1000000000);
-    rec->ts.nsecs = (int)(event_info->ts % 1000000000);
-    rec->presence_flags = WTAP_HAS_TS;
+    set_rec_metadata(tracecmd, rec, event_info);
 
     return TRUE;
 }

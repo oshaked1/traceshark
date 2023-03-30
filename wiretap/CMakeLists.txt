@@ -13,6 +13,7 @@ set(WIRETAP_PUBLIC_HEADERS
 	pcap-encap.h
 	pcapng_module.h
 	secrets-types.h
+    traceshark.h
 	wtap.h
 	wtap_modules.h
 	wtap_opttypes.h
