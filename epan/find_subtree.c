@@ -38,7 +38,7 @@ compare_subtree(proto_node *pn, gpointer data)
  * @return     The tree that was found or NULL if it was not found.
  */
 proto_tree *
-find_subtree(proto_tree *tree, gint hf)
+proto_find_subtree(proto_tree *tree, gint hf)
 {
     struct subtree_search search_struct;
 

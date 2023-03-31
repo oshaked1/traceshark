@@ -74,6 +74,14 @@ struct wtap {
     wtap_new_ipv6_callback_t    add_new_ipv6;
     wtap_new_secrets_callback_t add_new_secrets;
     GPtrArray                   *fast_seek;
+
+    /* Traceshark data */
+    GHashTable *linux_trace_event_formats;  /* A hash table of event formats for each machine.
+                                             * The key is the machine ID, each value is
+                                             * of type struct linux_trace_event_format**.
+                                             * The number of formats for each machine is
+                                             * always 65536 (2^16 - the number of possible events).
+                                             */
 };
 
 struct wtap_dumper;

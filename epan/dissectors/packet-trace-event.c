@@ -26,7 +26,7 @@ dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *d
     col_add_fstr(pinfo->cinfo, COL_INFO, "Machine ID = %u, Event Type = %u", metadata->machine_id, metadata->event_type);
 
     // add fields to frame tree
-    frame_tree = find_subtree(tree, proto_frame);
+    frame_tree = proto_find_subtree(tree, proto_frame);
     // initial dissection pass doesn't create the frame tree, so we shouldn't assert its existence
     if (frame_tree) {
         proto_tree_add_uint(frame_tree, hf_machine_id, tvb, 0, 0, metadata->machine_id);

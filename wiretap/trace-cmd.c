@@ -9,31 +9,14 @@
 
 static const unsigned char tracecmd_magic[3] = { 0x17, 0x08, 0x44 };
 
+static const guint32 machine_id = 0; // trace-cmd files contain events from a single system
+
 static int tracecmd_file_type_subtype = -1;
 
 int tracecmd_get_file_type_subtype(void)
 {
     return tracecmd_file_type_subtype;
 }
-
-struct field {
-    struct field *next;
-    gchar *type;
-    gboolean is_array;
-    gchar *name;
-    guint32 length;
-    gchar *length_expression;
-    guint32 offset;
-    guint32 size;
-    guint32 is_signed;
-};
-
-struct event_format {
-    gchar *system, *name;
-    guint16 id;
-    struct field *fields;
-    gchar *print_fmt;
-};
 
 struct cpu_data {
     guint64 offset;
@@ -50,7 +33,7 @@ struct tracecmd {
     gboolean big_endian;
     int long_size;
     guint32 page_size;
-    struct event_format *event_formats[MAX_EVENT + 1];
+    struct linux_trace_event_format *event_formats[MAX_EVENT + 1];
     guint32 num_cpus;
     struct cpu_data *cpu_data;
     struct rb_iter_state state;
@@ -265,9 +248,9 @@ read_error:
     return FALSE;
 }
 
-void tracecmd_free_event_format(struct event_format *format)
+void tracecmd_free_event_format(struct linux_trace_event_format *format)
 {
-    struct field *curr, *next;
+    struct linux_trace_event_field *curr, *next;
 
     if (!format)
         return;
@@ -326,9 +309,9 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
     guint64 tmp_int;
     gchar *tmp_length_expr;
 
-    struct event_format *format = g_new0(struct event_format, 1);
+    struct linux_trace_event_format *format = g_new0(struct linux_trace_event_format, 1);
     format->system = g_strdup(system);
-    struct field *field = NULL, *tmp_field;
+    struct linux_trace_event_field *field = NULL, *tmp_field;
 
     const char field_regex[] = "field\\:(.+)\\s((\\w+)(\\[(.*)\\]){0,1});\\s+offset\\:(\\d+);\\s+size\\:(\\d+);\\s+signed\\:(\\d+);";
     GRegex *regex = g_regex_new((const gchar *)&field_regex, 0, 0, NULL);
@@ -383,7 +366,7 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
 
             // field line
             if (g_strstr_len(lines[i], -1, "field:")) {
-                field = g_new0(struct field, 1);
+                field = g_new0(struct linux_trace_event_field, 1);
                 if (g_regex_match(regex, lines[i], 0, &match_info)) {
                     field->type = g_match_info_fetch(match_info, 1);
                     field->name = g_match_info_fetch(match_info, 3);
@@ -924,7 +907,7 @@ static void set_rec_metadata(struct tracecmd *tracecmd, wtap_rec *rec, struct ev
     ws_buffer_assure_space(&rec->options_buf, sizeof(struct event_options));
     options = (struct event_options *)ws_buffer_start_ptr(&rec->options_buf);
     memset(options, 0, sizeof(*options));
-    options->machine_id = 0; // trace-cmd files contain events from a single system
+    options->machine_id = machine_id;
     options->event_type = EVENT_TYPE_LINUX_TRACE_EVENT;
     options->type_specific_options.linux_trace_event.big_endian = tracecmd->big_endian;
     options->type_specific_options.linux_trace_event.cpu = event_info->cpu;
@@ -1092,6 +1075,11 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
     wth->file_tsprec = WTAP_TSPREC_NSEC;
     wth->snapshot_length = 0;
     wth->priv = tracecmd;
+
+    // initialize map of machine IDs to event formats for that machine,
+    // and populate it with the (only) machine for this file.
+    wth->linux_trace_event_formats = g_hash_table_new(g_int_hash, g_int_equal);
+    g_hash_table_insert(wth->linux_trace_event_formats, (gpointer)&machine_id, &tracecmd->event_formats);
 
     return WTAP_OPEN_MINE;
 }

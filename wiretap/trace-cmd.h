@@ -8,6 +8,25 @@ struct linux_trace_event_options {
     guint32 cpu;
 };
 
+struct linux_trace_event_field {
+    struct linux_trace_event_field *next;
+    gchar *type;
+    gboolean is_array;
+    gchar *name;
+    guint32 length;
+    gchar *length_expression;
+    guint32 offset;
+    guint32 size;
+    guint32 is_signed;
+};
+
+struct linux_trace_event_format {
+    gchar *system, *name;
+    guint16 id;
+    struct linux_trace_event_field *fields;
+    gchar *print_fmt;
+};
+
 WS_DLL_PUBLIC int tracecmd_get_file_type_subtype(void);
 
 wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info);

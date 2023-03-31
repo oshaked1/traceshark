@@ -8,6 +8,6 @@
 extern const value_string traceshark_event_types[];
 
 proto_tree *
-find_subtree(proto_tree *tree, gint hf);
+proto_find_subtree(proto_tree *tree, gint hf);
 
 #endif /* __EPAN_TRACESHARK_H__ */

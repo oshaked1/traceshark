@@ -1469,6 +1469,9 @@ wtap_close(wtap *wth)
 	wtap_block_array_free(wth->interface_data);
 	wtap_block_array_free(wth->dsbs);
 
+    if (wth->linux_trace_event_formats != NULL)
+        g_hash_table_destroy(wth->linux_trace_event_formats);
+
 	g_free(wth);
 }
 

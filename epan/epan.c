@@ -63,6 +63,10 @@
 #include "wscbor.h"
 #include <dtd.h>
 
+/* includes for Traceshark */
+#include <cfile.h>
+#include <wiretap/wtap-int.h>
+
 #ifdef HAVE_PLUGINS
 #include <wsutil/plugins.h>
 #endif
@@ -499,6 +503,14 @@ epan_get_frame_ts(const epan_t *session, guint32 frame_num)
 		ws_warning("!!! couldn't get frame ts for %u !!!\n", frame_num);
 
 	return abs_ts;
+}
+
+const struct linux_trace_event_format *
+epan_get_linux_trace_event_format(const epan_t *session, guint32 machine_id, guint16 event_id)
+{
+    struct linux_trace_event_format **formats = (struct linux_trace_event_format **)g_hash_table_lookup(session->prov->wth->linux_trace_event_formats, (gpointer)&machine_id);
+
+    return formats[event_id];
 }
 
 void
