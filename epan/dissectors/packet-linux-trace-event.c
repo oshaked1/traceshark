@@ -24,6 +24,7 @@ dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, v
     metadata = &((struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf))->type_specific_options.linux_trace_event;
 
     col_set_str(pinfo->cinfo, COL_PROTOCOL, "LINUX_TRACE_EVENT");
+    col_add_fstr(pinfo->cinfo, COL_INFO, "CPU = %u", metadata->cpu);
 
     // create Linux trace event tree
     linux_trace_event_item = proto_tree_add_item(tree, proto_linux_trace_event, tvb, 0, -1, ENC_NA);

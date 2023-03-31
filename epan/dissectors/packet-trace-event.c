@@ -17,12 +17,13 @@ static int
 dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
     proto_tree *frame_tree;
+    struct event_options *metadata;
     
     DISSECTOR_ASSERT(pinfo->rec->rec_type == REC_TYPE_FT_SPECIFIC_EVENT);
-    struct event_options *metadata = (struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf);
+    metadata = (struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf);
 
     col_set_str(pinfo->cinfo, COL_PROTOCOL, "TRACE_EVENT");
-    col_clear(pinfo->cinfo, COL_INFO);
+    col_add_fstr(pinfo->cinfo, COL_INFO, "Machine ID = %u, Event Type = %u", metadata->machine_id, metadata->event_type);
 
     // add fields to frame tree
     frame_tree = find_subtree(tree, proto_frame);
