@@ -985,7 +985,7 @@ static gboolean tracecmd_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err, g
     *data_offset = event_info->offset;
 
     // insert event info into map
-    g_hash_table_insert(tracecmd->events, GSIZE_TO_POINTER(event_info->offset), event_info);
+    g_hash_table_insert(tracecmd->events, &event_info->offset, event_info);
 
     return TRUE;
 
@@ -1005,7 +1005,7 @@ static gboolean tracecmd_seek_read(wtap *wth, gint64 seek_off, wtap_rec *rec, Bu
     ws_noisy("getting event at offset 0x%08lx", seek_off);
     
     // lookup event info
-    if ((event_info = g_hash_table_lookup(tracecmd->events, GSIZE_TO_POINTER((guint64)seek_off))) == NULL)
+    if ((event_info = g_hash_table_lookup(tracecmd->events, &seek_off)) == NULL)
         return FALSE;
     
     // read the event data
@@ -1065,7 +1065,7 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
         return WTAP_OPEN_ERROR;
     
     // initialize mapping from event offset to info
-    tracecmd->events = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+    tracecmd->events = g_hash_table_new_full(g_int64_hash, g_int64_equal, NULL, g_free);
     
     wth->file_type_subtype = tracecmd_file_type_subtype;
     wth->subtype_read = tracecmd_read;
