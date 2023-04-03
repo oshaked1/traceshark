@@ -508,7 +508,15 @@ epan_get_frame_ts(const epan_t *session, guint32 frame_num)
 const struct linux_trace_event_format *
 epan_get_linux_trace_event_format(const epan_t *session, guint32 machine_id, guint16 event_id)
 {
-    struct linux_trace_event_format **formats = (struct linux_trace_event_format **)g_hash_table_lookup(session->prov->wth->linux_trace_event_formats, (gpointer)&machine_id);
+    struct linux_trace_event_format **formats;
+
+    if (session->prov->wth->linux_trace_event_formats == NULL)
+        return NULL;
+    
+    formats = g_hash_table_lookup(session->prov->wth->linux_trace_event_formats, (gpointer)&machine_id);
+
+    if (formats == NULL)
+        return NULL;
 
     return formats[event_id];
 }

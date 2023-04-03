@@ -6126,6 +6126,7 @@ gboolean pcapng_encap_is_ft_specific(int encap)
 {
     switch (encap) {
     case WTAP_ENCAP_SYSTEMD_JOURNAL:
+    case WTAP_ENCAP_TRACESHARK:
         return TRUE;
     }
     return FALSE;

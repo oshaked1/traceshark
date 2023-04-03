@@ -4,8 +4,7 @@
 #include "wtap-int.h"
 #include "file_wrappers.h"
 
-#define MAX_EVENT 65535
-#define MAX_UINT32 4294967295
+#define MAX_EVENT G_MAXUINT16
 
 static const unsigned char tracecmd_magic[3] = { 0x17, 0x08, 0x44 };
 
@@ -379,7 +378,7 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
                     tmp_str = g_match_info_fetch(match_info, 5);
                     // length is not always present
                     if (strlen(tmp_str) > 0) {
-                        if (g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_UINT32, &tmp_int, NULL))
+                        if (g_ascii_string_to_unsigned(tmp_str, 10, 0, G_MAXUINT32, &tmp_int, NULL))
                             field->length = (guint32)tmp_int;
                         // length may have an expression instead of a number
                         else
@@ -389,21 +388,21 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
                     tmp_str = NULL;
 
                     tmp_str = g_match_info_fetch(match_info, 6);
-                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_UINT32, &tmp_int, NULL))
+                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, G_MAXUINT32, &tmp_int, NULL))
                         goto cleanup;
                     field->offset = (guint32)tmp_int;
                     g_free(tmp_str);
                     tmp_str = NULL;
 
                     tmp_str = g_match_info_fetch(match_info, 7);
-                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_UINT32, &tmp_int, NULL))
+                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, G_MAXUINT32, &tmp_int, NULL))
                         goto cleanup;
                     field->size = (guint32)tmp_int;
                     g_free(tmp_str);
                     tmp_str = NULL;
 
                     tmp_str = g_match_info_fetch(match_info, 8);
-                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, MAX_UINT32, &tmp_int, NULL))
+                    if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, G_MAXUINT32, &tmp_int, NULL))
                         goto cleanup;
                     field->is_signed = (guint32)tmp_int;
                     g_free(tmp_str);
@@ -898,7 +897,7 @@ static void set_rec_metadata(struct tracecmd *tracecmd, wtap_rec *rec, struct ev
     struct event_options *options;
 
     rec->rec_type = REC_TYPE_FT_SPECIFIC_EVENT;
-    rec->rec_header.ft_specific_header.record_type = 0;
+    rec->rec_header.ft_specific_header.record_type = BLOCK_TYPE_EVENT;
     rec->rec_header.ft_specific_header.record_len = event_info->size;
     rec->ts.secs = (time_t)(event_info->ts / 1000000000);
     rec->ts.nsecs = (int)(event_info->ts % 1000000000);
@@ -1069,7 +1068,7 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
     wth->subtype_read = tracecmd_read;
     wth->subtype_seek_read = tracecmd_seek_read;
     wth->subtype_close = tracecmd_close;
-    wth->file_encap = WTAP_ENCAP_UNKNOWN;
+    wth->file_encap = WTAP_ENCAP_TRACESHARK;
     wth->file_tsprec = WTAP_TSPREC_NSEC;
     wth->snapshot_length = 0;
     wth->priv = tracecmd;
@@ -1078,6 +1077,9 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
     // and populate it with the (only) machine for this file.
     wth->linux_trace_event_formats = g_hash_table_new(g_int_hash, g_int_equal);
     g_hash_table_insert(wth->linux_trace_event_formats, (gpointer)&machine_id, &tracecmd->event_formats);
+
+    // add generated IDB (required so the file can be written as pcapng)
+    wtap_add_generated_idb(wth);
 
     return WTAP_OPEN_MINE;
 }

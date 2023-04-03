@@ -68,4 +68,7 @@ proto_reg_handoff_trace_event(void)
     
     // register to wtap_fts_rec dissector table for all supported trace file types
     dissector_add_uint("wtap_fts_rec", tracecmd_get_file_type_subtype(), trace_event_handle);
+
+    // register to pcapng block type dissector table
+    dissector_add_uint("pcapng.block_type", BLOCK_TYPE_EVENT, trace_event_handle);
 }
