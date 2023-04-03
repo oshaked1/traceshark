@@ -977,8 +977,7 @@ static gboolean tracecmd_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err, g
     ws_noisy("found event: offset=0x%08lx size=%u ts=%lu", event_info->offset, event_info->size, event_info->ts);
 
     // read the event data
-    ws_buffer_assure_space(buf, event_info->size);
-    if (!wtap_read_bytes(wth->fh, ws_buffer_start_ptr(buf), event_info->size, err, err_info))
+    if (!wtap_read_packet_bytes(wth->fh, buf, event_info->size, err, err_info))
         goto error;
     
     set_rec_metadata(tracecmd, rec, event_info);
@@ -1009,8 +1008,7 @@ static gboolean tracecmd_seek_read(wtap *wth, gint64 seek_off, wtap_rec *rec, Bu
         return FALSE;
     
     // read the event data
-    ws_buffer_assure_space(buf, event_info->size);
-    if (!wtap_read_bytes(wth->random_fh, ws_buffer_start_ptr(buf), event_info->size, err, err_info))
+    if (!wtap_read_packet_bytes(wth->random_fh, buf, event_info->size, err, err_info))
         return FALSE;
     
     set_rec_metadata(tracecmd, rec, event_info);

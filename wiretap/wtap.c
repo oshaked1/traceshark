@@ -1472,7 +1472,7 @@ wtap_close(wtap *wth)
     if (wth->linux_trace_event_formats != NULL)
         g_hash_table_destroy(wth->linux_trace_event_formats);
 
-	g_free(wth);
+    g_free(wth);
 }
 
 void
