@@ -13,8 +13,8 @@ struct linux_trace_event_field {
     gchar *type;
     gboolean is_array;
     gchar *name;
-    guint32 length;
-    gchar *length_expression;
+    guint32 length;             // array length for array type fields
+    gchar *length_expression;   // array length expression for array type fields (if this is set, length is not set)
     guint32 offset;
     guint32 size;
     guint32 is_signed;
