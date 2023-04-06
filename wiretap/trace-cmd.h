@@ -18,6 +18,9 @@ struct linux_trace_event_field {
     guint32 offset;
     guint32 size;
     guint32 is_signed;
+    gboolean is_data_loc;
+    gboolean is_variable_data;
+    struct linux_trace_event_field *data_field;
 };
 
 struct linux_trace_event_format {

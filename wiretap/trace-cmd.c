@@ -310,7 +310,7 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
 
     struct linux_trace_event_format *format = g_new0(struct linux_trace_event_format, 1);
     format->system = g_strdup(system);
-    struct linux_trace_event_field *field = NULL, *tmp_field;
+    struct linux_trace_event_field *field = NULL, *data_fields = NULL, *tmp_field, *tmp_data_field;
 
     const char field_regex[] = "field\\:(.+)\\s((\\w+)(\\[(.*)\\]){0,1});\\s+offset\\:(\\d+);\\s+size\\:(\\d+);\\s+signed\\:(\\d+);";
     GRegex *regex = g_regex_new((const gchar *)&field_regex, 0, 0, NULL);
@@ -368,6 +368,8 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
                 field = g_new0(struct linux_trace_event_field, 1);
                 if (g_regex_match(regex, lines[i], 0, &match_info)) {
                     field->type = g_match_info_fetch(match_info, 1);
+                    field->is_data_loc = strncmp(field->type, "__data_loc", 10) == 0;
+
                     field->name = g_match_info_fetch(match_info, 3);
 
                     tmp_str = g_match_info_fetch(match_info, 4);
@@ -415,19 +417,67 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
                     match_info = NULL;
 
                     // link field into list of fields
-                    if (!format->fields)
+                    if (format->fields == NULL)
                         format->fields = field;
                     else {
                         tmp_field = format->fields;
-                        while (tmp_field->next)
+                        while (tmp_field->next != NULL)
                             tmp_field = tmp_field->next;
                         tmp_field->next = field;
+                    }
+
+                    /**
+                     * Field is __data_loc - duplicate it, change the appropriate fields and add it to the data fields.
+                     * __data_loc means this field points to variable sized data in the event.
+                     * The type indicated by the field's format is the type of the data, and type of this field
+                     * is always a 32-bit integer, where the lower 16 bits indicate the offset and the higher 16-bits
+                     * indicate the size of the data.
+                     */
+                    if (field->is_data_loc) {
+                        tmp_data_field = g_new(struct linux_trace_event_field, 1);
+
+                        tmp_data_field->next = NULL;
+
+                        // skip "__data_loc" portion of the field type
+                        tmp_data_field->type = g_strdup(&field->type[11]);
+
+                        tmp_data_field->is_array = field->is_array;
+                        tmp_data_field->name = g_strdup(field->name);
+                        tmp_data_field->length = field->length;
+                        tmp_data_field->length_expression = g_strdup(field->length_expression);
+                        tmp_data_field->offset = 0;
+                        tmp_data_field->size = 0;
+                        tmp_data_field->is_signed = field->is_signed;
+                        tmp_data_field->is_data_loc = FALSE;
+                        tmp_data_field->is_variable_data = TRUE;
+                        tmp_data_field->data_field = NULL;
+
+                        // link the data field to its __data_loc field
+                        field->data_field = tmp_data_field;
+
+                        // link the data field into the list of data fields
+                        if (data_fields == NULL)
+                            data_fields = tmp_data_field;
+                        else {
+                            tmp_field = data_fields;
+                            while (tmp_field->next != NULL)
+                                tmp_field = tmp_field->next;
+                            tmp_field->next = tmp_data_field;
+                        }
                     }
                 }
                 else
                     goto cleanup;
             }
         }
+    }
+
+    // link data fields to end of regular fields list
+    if (data_fields != NULL) {
+        tmp_field = format->fields;
+        while (tmp_field->next != NULL)
+            tmp_field = tmp_field->next;
+        tmp_field->next = data_fields;
     }
 
     // make sure print format was encountered

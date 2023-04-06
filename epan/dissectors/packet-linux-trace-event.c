@@ -33,7 +33,14 @@ struct dynamic_hf {
  * with conflicting field definitions (different event name to ID mappings and
  * even different field types and definitions for the same event).
  */
-static wmem_map_t *dynamic_hf_map = NULL;
+static wmem_map_t *dynamic_hf_map;
+
+/**
+ * This map contains the offset and size of a variable data field.
+ * The key is a pointer to its field info (struct linux_trace_event_field),
+ * and the data is a guint32 which is the corresponding __data_loc field's value.
+ */
+static wmem_map_t *variable_data_loc;
 
 static void free_dynamic_hf(gpointer key _U_, gpointer value, gpointer user_data _U_)
 {
@@ -44,10 +51,8 @@ static void free_dynamic_hf(gpointer key _U_, gpointer value, gpointer user_data
     for (i = 0; i < dynamic_hf->len; i++) {
         field = &dynamic_hf->hf[i];
         proto_deregister_field(proto_linux_trace_event, *(field->p_id));
-        g_free(field->p_id);
     }
     proto_add_deregistered_data(dynamic_hf->hf);
-    g_free(dynamic_hf);
 }
 
 static gboolean dynamic_hf_map_destroy_cb(wmem_allocator_t *allocator _U_, wmem_cb_event_t event _U_, void *user_data _U_)
@@ -82,10 +87,18 @@ static int field_display(enum ftenum type)
 
 static void dynamic_hf_populate_field(hf_register_info *hf, const struct linux_trace_event_field *field, const gchar *event_system, const gchar *event_name)
 {
-    hf->p_id = g_new(int, 1);
+    hf->p_id = wmem_new(wmem_file_scope(), int);
     *(hf->p_id) = -1;
-    hf->hfinfo.name = g_strdup(field->name);
-    hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s", event_system, event_name, field->name);
+
+    if (field->is_data_loc) {
+        hf->hfinfo.name = g_strdup_printf("%s (data_loc)", field->name);
+        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s_data_loc", event_system, event_name, field->name);
+    }
+    else {
+        hf->hfinfo.name = g_strdup(field->name);
+        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s", event_system, event_name, field->name);
+    }
+    
     hf->hfinfo.type = field_type(field);
     hf->hfinfo.display = field_display(hf->hfinfo.type);
     hf->hfinfo.strings = NULL;
@@ -111,7 +124,7 @@ static struct dynamic_hf *get_dynamic_hf(guint32 machine_id, guint16 event_id, c
         return dynamic_hf;
 
     // entry not found - generate dynamic hf, register it and populate the map
-    dynamic_hf = g_new(struct dynamic_hf, 1);
+    dynamic_hf = wmem_new(wmem_file_scope(), struct dynamic_hf);
 
     // walk the field list to find how many are there
     dynamic_hf->len = 0;
@@ -144,17 +157,37 @@ static struct dynamic_hf *get_dynamic_hf(guint32 machine_id, guint16 event_id, c
 }
 
 static void
-dissect_event_data(tvbuff_t *tvb, proto_tree *tree, const struct linux_trace_event_format *format, const struct dynamic_hf *dynamic_hf, guint encoding)
+dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, const struct linux_trace_event_format *format, const struct dynamic_hf *dynamic_hf, guint encoding)
 {
     struct linux_trace_event_field *field;
     int i;
+    guint32 *data_loc = NULL;
 
     // go through all fields, keeping track of the index for accessing the dynamic hf array
     for (i = 0, field = format->fields; i < dynamic_hf->len; i++, field = field->next) {
         DISSECTOR_ASSERT(field != NULL);
 
+        // if the field is a variable data field, fetch the data location first
+        if (field->is_variable_data) {
+            data_loc = wmem_map_lookup(variable_data_loc, field);
+            DISSECTOR_ASSERT(data_loc != NULL);
+
+            field->offset = *data_loc & 0xffff;
+            field->size = *data_loc >> 16;
+        }
+
         // add the field
         proto_tree_add_item(tree, *(dynamic_hf->hf[i].p_id), tvb, field->offset, field->size, encoding);
+
+        // if the field is a __data_loc field, populate the corresponding data field's offset and size
+        if (field->is_data_loc) {
+            DISSECTOR_ASSERT(field->data_field != NULL);
+
+            data_loc = wmem_new(pinfo->pool, guint32);
+            *data_loc = tvb_get_guint32(tvb, field->offset, encoding);
+
+            wmem_map_insert(variable_data_loc, field->data_field, data_loc);
+        }
     }
 }
 
@@ -203,7 +236,7 @@ dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, v
     dynamic_hf = get_dynamic_hf(metadata->machine_id, event_id, format);
 
     // dissect event according to format
-    dissect_event_data(tvb, linux_trace_event_tree, format, dynamic_hf, encoding);
+    dissect_event_data(tvb, pinfo, linux_trace_event_tree, format, dynamic_hf, encoding);
 
     return tvb_captured_length(tvb);
 }
@@ -251,6 +284,9 @@ proto_register_linux_trace_event(void)
     // create dynamic field array map and register a callback to free the arrays when the map is destroyed
     dynamic_hf_map = wmem_map_new_autoreset(wmem_epan_scope(), wmem_file_scope(), g_int64_hash, g_int64_equal);
     wmem_register_callback(wmem_file_scope(), dynamic_hf_map_destroy_cb, NULL);
+
+    // create variable data field location map
+    variable_data_loc = wmem_map_new_autoreset(wmem_epan_scope(), wmem_packet_scope(), g_direct_hash, g_direct_equal);
 }
 
 void
