@@ -10,6 +10,8 @@ static int hf_event_name = -1;
 static int hf_event_system = -1;
 
 static gint ett_linux_trace_event = -1;
+static gint ett_common_fields = -1;
+static gint ett_event_specific_fields = -1;
 
 static const value_string endianness_vals[] = {
     { 0, "Little Endian" },
@@ -90,7 +92,11 @@ static void dynamic_hf_populate_field(hf_register_info *hf, const struct linux_t
     hf->p_id = wmem_new(wmem_file_scope(), int);
     *(hf->p_id) = -1;
 
-    if (field->is_data_loc) {
+    if (strncmp(field->name, "common_", 7) == 0) {
+        hf->hfinfo.name = g_strdup(field->name);
+        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s", field->name);
+    }
+    else if (field->is_data_loc) {
         hf->hfinfo.name = g_strdup_printf("%s (data_loc)", field->name);
         hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s_data_loc", event_system, event_name, field->name);
     }
@@ -157,7 +163,7 @@ static struct dynamic_hf *get_dynamic_hf(guint32 machine_id, guint16 event_id, c
 }
 
 static void
-dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, const struct linux_trace_event_format *format, const struct dynamic_hf *dynamic_hf, guint encoding)
+dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *common_fields_tree, proto_tree *event_specific_fields_tree, const struct linux_trace_event_format *format, const struct dynamic_hf *dynamic_hf, guint encoding)
 {
     struct linux_trace_event_field *field;
     int i;
@@ -177,7 +183,10 @@ dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, const st
         }
 
         // add the field
-        proto_tree_add_item(tree, *(dynamic_hf->hf[i].p_id), tvb, field->offset, field->size, encoding);
+        if (strncmp(field->name, "common_", 7) == 0)
+            proto_tree_add_item(common_fields_tree, *(dynamic_hf->hf[i].p_id), tvb, field->offset, field->size, encoding);
+        else
+            proto_tree_add_item(event_specific_fields_tree, *(dynamic_hf->hf[i].p_id), tvb, field->offset, field->size, encoding);
 
         // if the field is a __data_loc field, populate the corresponding data field's offset and size
         if (field->is_data_loc) {
@@ -195,7 +204,7 @@ static int
 dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
     proto_item *linux_trace_event_item, *item;
-    proto_tree *linux_trace_event_tree;
+    proto_tree *linux_trace_event_tree, *common_fields_tree, *event_specific_fields_tree;
     struct event_options *metadata;
     struct linux_trace_event_options *linux_trace_event_metadata;
     guint encoding;
@@ -232,11 +241,15 @@ dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, v
     item = proto_tree_add_string(linux_trace_event_tree, hf_event_name, tvb, 0, 2, format->name);
     proto_item_set_generated(item);
 
+    // add subtrees for common fields and event specific fields
+    common_fields_tree = proto_tree_add_subtree(linux_trace_event_tree, tvb, 0, -1, ett_common_fields, NULL, "Common Fields");
+    event_specific_fields_tree = proto_tree_add_subtree(linux_trace_event_tree, tvb, 0, -1, ett_event_specific_fields, NULL, "Event Specific Fields");
+
     // get dynamic field array
     dynamic_hf = get_dynamic_hf(metadata->machine_id, event_id, format);
 
     // dissect event according to format
-    dissect_event_data(tvb, pinfo, linux_trace_event_tree, format, dynamic_hf, encoding);
+    dissect_event_data(tvb, pinfo, common_fields_tree, event_specific_fields_tree, format, dynamic_hf, encoding);
 
     return tvb_captured_length(tvb);
 }
@@ -245,7 +258,9 @@ void
 proto_register_linux_trace_event(void)
 {
     static gint *ett[] = {
-        &ett_linux_trace_event
+        &ett_linux_trace_event,
+        &ett_common_fields,
+        &ett_event_specific_fields
     };
     
     static hf_register_info hf[] = {
