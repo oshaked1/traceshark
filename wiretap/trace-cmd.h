@@ -10,6 +10,7 @@ struct linux_trace_event_options {
 
 struct linux_trace_event_field {
     struct linux_trace_event_field *next;
+    gchar *full_definition;
     gchar *type;
     gboolean is_array;
     gchar *name;

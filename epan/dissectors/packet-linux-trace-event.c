@@ -92,18 +92,14 @@ static void dynamic_hf_populate_field(hf_register_info *hf, const struct linux_t
     hf->p_id = wmem_new(wmem_file_scope(), int);
     *(hf->p_id) = -1;
 
-    if (strncmp(field->name, "common_", 7) == 0) {
-        hf->hfinfo.name = g_strdup(field->name);
+    hf->hfinfo.name = g_strdup(field->full_definition);
+
+    if (strncmp(field->name, "common_", 7) == 0)
         hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s", field->name);
-    }
-    else if (field->is_data_loc) {
-        hf->hfinfo.name = g_strdup_printf("%s (data_loc)", field->name);
+    else if (field->is_data_loc)
         hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s_data_loc", event_system, event_name, field->name);
-    }
-    else {
-        hf->hfinfo.name = g_strdup(field->name);
+    else
         hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s", event_system, event_name, field->name);
-    }
     
     hf->hfinfo.type = field_type(field);
     hf->hfinfo.display = field_display(hf->hfinfo.type);

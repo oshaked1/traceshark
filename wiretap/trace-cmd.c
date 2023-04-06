@@ -312,7 +312,7 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
     format->system = g_strdup(system);
     struct linux_trace_event_field *field = NULL, *data_fields = NULL, *tmp_field, *tmp_data_field;
 
-    const char field_regex[] = "field\\:(.+)\\s((\\w+)(\\[(.*)\\]){0,1});\\s+offset\\:(\\d+);\\s+size\\:(\\d+);\\s+signed\\:(\\d+);";
+    const char field_regex[] = "field\\:((.+)\\s((\\w+)(\\[(.*)\\]){0,1}));\\s+offset\\:(\\d+);\\s+size\\:(\\d+);\\s+signed\\:(\\d+);";
     GRegex *regex = g_regex_new((const gchar *)&field_regex, 0, 0, NULL);
     if (!regex)
         goto cleanup;
@@ -367,17 +367,18 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
             if (g_strstr_len(lines[i], -1, "field:")) {
                 field = g_new0(struct linux_trace_event_field, 1);
                 if (g_regex_match(regex, lines[i], 0, &match_info)) {
-                    field->type = g_match_info_fetch(match_info, 1);
+                    field->full_definition = g_match_info_fetch(match_info, 1);
+                    field->type = g_match_info_fetch(match_info, 2);
                     field->is_data_loc = strncmp(field->type, "__data_loc", 10) == 0;
 
-                    field->name = g_match_info_fetch(match_info, 3);
+                    field->name = g_match_info_fetch(match_info, 4);
 
-                    tmp_str = g_match_info_fetch(match_info, 4);
+                    tmp_str = g_match_info_fetch(match_info, 5);
                     field->is_array = strlen(tmp_str) > 0;
                     g_free(tmp_str);
                     tmp_str = NULL;
 
-                    tmp_str = g_match_info_fetch(match_info, 5);
+                    tmp_str = g_match_info_fetch(match_info, 6);
                     // length is not always present
                     if (strlen(tmp_str) > 0) {
                         if (g_ascii_string_to_unsigned(tmp_str, 10, 0, G_MAXUINT32, &tmp_int, NULL))
@@ -389,21 +390,21 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
                     g_free(tmp_str);
                     tmp_str = NULL;
 
-                    tmp_str = g_match_info_fetch(match_info, 6);
+                    tmp_str = g_match_info_fetch(match_info, 7);
                     if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, G_MAXUINT32, &tmp_int, NULL))
                         goto cleanup;
                     field->offset = (guint32)tmp_int;
                     g_free(tmp_str);
                     tmp_str = NULL;
 
-                    tmp_str = g_match_info_fetch(match_info, 7);
+                    tmp_str = g_match_info_fetch(match_info, 8);
                     if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, G_MAXUINT32, &tmp_int, NULL))
                         goto cleanup;
                     field->size = (guint32)tmp_int;
                     g_free(tmp_str);
                     tmp_str = NULL;
 
-                    tmp_str = g_match_info_fetch(match_info, 8);
+                    tmp_str = g_match_info_fetch(match_info, 9);
                     if (!g_ascii_string_to_unsigned(tmp_str, 10, 0, G_MAXUINT32, &tmp_int, NULL))
                         goto cleanup;
                     field->is_signed = (guint32)tmp_int;
@@ -438,7 +439,8 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
 
                         tmp_data_field->next = NULL;
 
-                        // skip "__data_loc" portion of the field type
+                        // skip "__data_loc" portion of the field full definition and type
+                        tmp_data_field->full_definition = g_strdup(&field->full_definition[11]);
                         tmp_data_field->type = g_strdup(&field->type[11]);
 
                         tmp_data_field->is_array = field->is_array;
