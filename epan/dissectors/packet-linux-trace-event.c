@@ -65,45 +65,147 @@ static gboolean dynamic_hf_map_destroy_cb(wmem_allocator_t *allocator _U_, wmem_
     return TRUE;
 }
 
-/**
- * Determine the field type based on the field format data.
- * This is not implemented yet, so all fields are determined to be raw bytes.
- */
-static enum ftenum field_type(const struct linux_trace_event_field *field _U_)
-{
-    // default is FT_BYTES if we don't find a better match
-    enum ftenum type = FT_BYTES;
+struct type_display {
+    enum ftenum type;
+    int display;
+    const void *format_cb;
+};
 
-    return type;
+static void format_data_loc(gchar *buf, guint32 val)
+{
+    g_snprintf(buf, ITEM_LABEL_LENGTH, "0x%x (offset = 0x%x, size = 0x%x)", val, val & 0xffff, val >> 16);
 }
 
-static int field_display(enum ftenum type)
+/**
+ * Determine the field type and display based on the field format data.
+ */
+static void get_field_type_display(const struct linux_trace_event_field *field, struct type_display *info)
 {
-    switch (type) {
-        case FT_BYTES:
-            return BASE_NONE;
-        default:
-            return BASE_NONE;
+    info->format_cb = NULL;
+
+    // signed types
+    if (strcmp(field->type, "short")            == 0 ||
+        strcmp(field->type, "signed short")     == 0 ||
+        strcmp(field->type, "int")              == 0 ||
+        strcmp(field->type, "signed int")       == 0 ||
+        strcmp(field->type, "signed")           == 0 ||
+        strcmp(field->type, "long")             == 0 ||
+        strcmp(field->type, "signed long")      == 0 ||
+        strcmp(field->type, "long long")        == 0 ||
+        strcmp(field->type, "signed long long") == 0 ||
+        strcmp(field->type, "s16")              == 0 ||
+        strcmp(field->type, "s32")              == 0 ||
+        strcmp(field->type, "s64")              == 0 ||
+        strcmp(field->type, "ssize_t")          == 0 ||
+        strcmp(field->type, "pid_t")            == 0) {
+        
+        switch (field->size) {
+            case 2:
+                info->type = FT_INT16;
+                info->display = BASE_DEC;
+                return;
+            case 4:
+                info->type = FT_INT32;
+                info->display = BASE_DEC;
+                return;
+            case 8:
+                info->type = FT_INT64;
+                info->display = BASE_DEC;
+                return;
+        }
     }
+
+    // unsigned types
+    if (strcmp(field->type, "unsigned short")       == 0 ||
+        strcmp(field->type, "unsigned int")         == 0 ||
+        strcmp(field->type, "unsigned")             == 0 ||
+        strcmp(field->type, "unsigned long")        == 0 ||
+        strcmp(field->type, "unsigned long long")   == 0 ||
+        strcmp(field->type, "u16")                  == 0 ||
+        strcmp(field->type, "u32")                  == 0 ||
+        strcmp(field->type, "u64")                  == 0 ||
+        strcmp(field->type, "size_t")               == 0 ||
+        strstr(field->type, "enum")                 == field->type) {
+        
+        switch (field->size) {
+            case 2:
+                info->type = FT_UINT16;
+                info->display = BASE_DEC_HEX;
+                return;
+            case 4:
+                info->type = FT_UINT32;
+                info->display = BASE_DEC_HEX;
+                return;
+            case 8:
+                info->type = FT_UINT64;
+                info->display = BASE_DEC_HEX;
+                return;
+        }
+    }
+
+    // pointer
+    else if (field->type[strlen(field->type) - 1] == '*') {
+        switch (field->size) {
+            case 4:
+                info->type = FT_UINT32;
+                info->display = BASE_HEX;
+                return;
+            case 8:
+                info->type = FT_UINT64;
+                info->display = BASE_HEX;
+                return;
+        }
+    }
+
+    // bool
+    else if (strcmp(field->type, "bool") == 0) {
+        info->type = FT_BOOLEAN;
+        info->display = BASE_NONE;
+        return;
+    }
+
+    // string
+    else if (strstr(field->type, "char[") == field->type || (strcmp(field->type, "char") == 0 && field->is_array)) {
+        info->type = FT_STRING;
+        info->display = BASE_NONE;
+        return;
+    }
+
+    // __data_loc
+    else if (strstr(field->type, "__data_loc") == field->type && field->size == 4) {
+        info->type = FT_UINT32;
+        info->display = BASE_CUSTOM;
+        info->format_cb = CF_FUNC(format_data_loc);
+        return;
+    }
+
+    // default is FT_BYTES and BASE_NONE if we didn't find a better match
+    info->type = FT_BYTES;
+    info->display = BASE_NONE;
 }
 
 static void dynamic_hf_populate_field(hf_register_info *hf, const struct linux_trace_event_field *field, const gchar *event_system, const gchar *event_name)
 {
+    struct type_display info;
+
     hf->p_id = wmem_new(wmem_file_scope(), int);
     *(hf->p_id) = -1;
 
     hf->hfinfo.name = g_strdup(field->full_definition);
 
-    if (strncmp(field->name, "common_", 7) == 0)
+    if (strstr(field->name, "common_") == field->name)
         hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s", field->name);
     else if (field->is_data_loc)
         hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s_data_loc", event_system, event_name, field->name);
     else
         hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s", event_system, event_name, field->name);
     
-    hf->hfinfo.type = field_type(field);
-    hf->hfinfo.display = field_display(hf->hfinfo.type);
-    hf->hfinfo.strings = NULL;
+    // get type and display
+    get_field_type_display(field, &info);
+    
+    hf->hfinfo.type = info.type;
+    hf->hfinfo.display = info.display;
+    hf->hfinfo.strings = info.format_cb;
     hf->hfinfo.bitmask = 0;
     hf->hfinfo.blurb = g_strdup(field->name);
     HFILL_INIT(hf[0]);
@@ -179,7 +281,7 @@ dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *common_fields_
         }
 
         // add the field
-        if (strncmp(field->name, "common_", 7) == 0)
+        if (strstr(field->name, "common_") == field->name)
             proto_tree_add_item(common_fields_tree, *(dynamic_hf->hf[i].p_id), tvb, field->offset, field->size, encoding);
         else
             proto_tree_add_item(event_specific_fields_tree, *(dynamic_hf->hf[i].p_id), tvb, field->offset, field->size, encoding);

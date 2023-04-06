@@ -369,7 +369,7 @@ static gboolean tracecmd_parse_event_format(const gchar *system, const gchar *fo
                 if (g_regex_match(regex, lines[i], 0, &match_info)) {
                     field->full_definition = g_match_info_fetch(match_info, 1);
                     field->type = g_match_info_fetch(match_info, 2);
-                    field->is_data_loc = strncmp(field->type, "__data_loc", 10) == 0;
+                    field->is_data_loc = strstr(field->type, "__data_loc") == field->type;
 
                     field->name = g_match_info_fetch(match_info, 4);
 
