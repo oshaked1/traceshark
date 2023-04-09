@@ -7,7 +7,7 @@ static int proto_trace_event = -1;
 static dissector_table_t event_type_dissector_table;
 
 /**
- * Frame fields
+ * Additional frame fields
 */
 static int proto_frame = -1;
 static int hf_machine_id = -1;
@@ -19,7 +19,7 @@ dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *d
     proto_tree *frame_tree;
     struct event_options *metadata;
     
-    DISSECTOR_ASSERT(pinfo->rec->rec_type == REC_TYPE_FT_SPECIFIC_EVENT);
+    DISSECTOR_ASSERT_HINT(pinfo->rec->rec_type == REC_TYPE_FT_SPECIFIC_EVENT, "Exptected REC_TYPE_FT_SPECIFIC_EVENT record");
     metadata = (struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf);
 
     col_set_str(pinfo->cinfo, COL_PROTOCOL, "TRACE_EVENT");
@@ -29,8 +29,8 @@ dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *d
     frame_tree = proto_find_subtree(tree, proto_frame);
     // initial dissection pass doesn't create the frame tree, so we shouldn't assert its existence
     if (frame_tree) {
-        proto_tree_add_uint(frame_tree, hf_machine_id, tvb, 0, 0, metadata->machine_id);
-        proto_tree_add_uint(frame_tree, hf_event_type, tvb, 0, 0, metadata->event_type);
+        traceshark_proto_tree_add_uint(frame_tree, hf_machine_id, tvb, 0, 0, metadata->machine_id);
+        traceshark_proto_tree_add_uint(frame_tree, hf_event_type, tvb, 0, 0, metadata->event_type);
     }
 
     // call dissector for this event type

@@ -1,4 +1,5 @@
 #include <epan/packet.h>
+#include <epan/traceshark.h>
 #include <wiretap/traceshark.h>
 
 static int proto_linux_trace_event = -1;
@@ -194,11 +195,11 @@ static void dynamic_hf_populate_field(hf_register_info *hf, const struct linux_t
     hf->hfinfo.name = g_strdup(field->full_definition);
 
     if (strstr(field->name, "common_") == field->name)
-        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s", field->name);
+        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event.data.%s", field->name);
     else if (field->is_data_loc)
-        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s_data_loc", event_system, event_name, field->name);
+        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event.data.%s.%s.%s_data_loc", event_system, event_name, field->name);
     else
-        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event_data.%s.%s.%s", event_system, event_name, field->name);
+        hf->hfinfo.abbrev = g_strdup_printf("linux_trace_event.data.%s.%s.%s", event_system, event_name, field->name);
     
     // get type and display
     get_field_type_display(field, &info);
@@ -260,46 +261,49 @@ static struct dynamic_hf *get_dynamic_hf(guint32 machine_id, guint16 event_id, c
     return dynamic_hf;
 }
 
-static void
-dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *common_fields_tree, proto_tree *event_specific_fields_tree, const struct linux_trace_event_format *format, const struct dynamic_hf *dynamic_hf, guint encoding)
+static void dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *common_fields_tree, proto_tree *event_specific_fields_tree, const struct linux_trace_event_format *format, const struct dynamic_hf *dynamic_hf, guint encoding)
 {
     struct linux_trace_event_field *field;
     int i;
+    guint32 offset, size;
     guint32 *data_loc = NULL;
 
     // go through all fields, keeping track of the index for accessing the dynamic hf array
     for (i = 0, field = format->fields; i < dynamic_hf->len; i++, field = field->next) {
         DISSECTOR_ASSERT(field != NULL);
 
+        // offset and size come from the format unless it's variable data
+        offset = field->offset;
+        size = field->size;
+
         // if the field is a variable data field, fetch the data location first
         if (field->is_variable_data) {
             data_loc = wmem_map_lookup(variable_data_loc, field);
             DISSECTOR_ASSERT(data_loc != NULL);
 
-            field->offset = *data_loc & 0xffff;
-            field->size = *data_loc >> 16;
+            offset = *data_loc & 0xffff;
+            size = *data_loc >> 16;
         }
 
         // add the field
         if (strstr(field->name, "common_") == field->name)
-            proto_tree_add_item(common_fields_tree, *(dynamic_hf->hf[i].p_id), tvb, field->offset, field->size, encoding);
+            traceshark_proto_tree_add_item(common_fields_tree, *(dynamic_hf->hf[i].p_id), tvb, offset, size, encoding);
         else
-            proto_tree_add_item(event_specific_fields_tree, *(dynamic_hf->hf[i].p_id), tvb, field->offset, field->size, encoding);
-
+            traceshark_proto_tree_add_item(event_specific_fields_tree, *(dynamic_hf->hf[i].p_id), tvb, offset, size, encoding);
+        
         // if the field is a __data_loc field, populate the corresponding data field's offset and size
         if (field->is_data_loc) {
-            DISSECTOR_ASSERT(field->data_field != NULL);
+            DISSECTOR_ASSERT_HINT(field->data_field != NULL, "No reference to data field in data_loc field");
 
             data_loc = wmem_new(pinfo->pool, guint32);
-            *data_loc = tvb_get_guint32(tvb, field->offset, encoding);
+            *data_loc = tvb_get_guint32(tvb, offset, encoding);
 
             wmem_map_insert(variable_data_loc, field->data_field, data_loc);
         }
     }
 }
 
-static int
-dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
     proto_item *linux_trace_event_item, *item;
     proto_tree *linux_trace_event_tree, *common_fields_tree, *event_specific_fields_tree;
@@ -309,6 +313,7 @@ dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, v
     guint16 event_id;
     const struct linux_trace_event_format *format;
     struct dynamic_hf *dynamic_hf;
+    fvalue_t *pid_val;
 
     metadata = (struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf);
     linux_trace_event_metadata = &metadata->type_specific_options.linux_trace_event;
@@ -323,20 +328,19 @@ dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, v
     linux_trace_event_tree = proto_item_add_subtree(linux_trace_event_item, ett_linux_trace_event);
 
     // populate event metadata fields
-    item = proto_tree_add_uint(linux_trace_event_tree, hf_big_endian, tvb, 0, 0, (guint8)linux_trace_event_metadata->big_endian);
+    item = traceshark_proto_tree_add_uint(linux_trace_event_tree, hf_big_endian, tvb, 0, 0, (guint8)linux_trace_event_metadata->big_endian);
     proto_item_set_generated(item);
-    item = proto_tree_add_uint(linux_trace_event_tree, hf_cpu, tvb, 0, 0, linux_trace_event_metadata->cpu);
+    item = traceshark_proto_tree_add_uint(linux_trace_event_tree, hf_cpu, tvb, 0, 0, linux_trace_event_metadata->cpu);
     proto_item_set_generated(item);
 
     // dissect event ID and fetch the event format
-    item = proto_tree_add_item(linux_trace_event_tree, hf_event_id, tvb, 0, 2, encoding);
+    item = traceshark_proto_tree_add_item(linux_trace_event_tree, hf_event_id, tvb, 0, 2, encoding);
     event_id = tvb_get_guint16(tvb, 0, encoding);
     format = epan_get_linux_trace_event_format(pinfo->epan, metadata->machine_id, event_id);
-    DISSECTOR_ASSERT(format != NULL);
-    col_append_fstr(pinfo->cinfo, COL_INFO, ", %s/%s", format->system, format->name);
-    item = proto_tree_add_string(linux_trace_event_tree, hf_event_system, tvb, 0, 2, format->system);
+    DISSECTOR_ASSERT_HINT(format != NULL, "Could not fetch event format");
+    item = traceshark_proto_tree_add_string(linux_trace_event_tree, hf_event_system, tvb, 0, 2, format->system);
     proto_item_set_generated(item);
-    item = proto_tree_add_string(linux_trace_event_tree, hf_event_name, tvb, 0, 2, format->name);
+    item = traceshark_proto_tree_add_string(linux_trace_event_tree, hf_event_name, tvb, 0, 2, format->name);
     proto_item_set_generated(item);
 
     // add subtrees for common fields and event specific fields
@@ -348,6 +352,14 @@ dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, v
 
     // dissect event according to format
     dissect_event_data(tvb, pinfo, common_fields_tree, event_specific_fields_tree, format, dynamic_hf, encoding);
+
+    // add PID to info column
+    pid_val = traceshark_fetch_subscribed_field_single_value("linux_trace_event.data.common_pid");
+    if (pid_val)
+        col_append_fstr(pinfo->cinfo, COL_INFO, ", PID = %d", fvalue_get_sinteger(pid_val));
+
+    // add event system and name to info column
+    col_append_fstr(pinfo->cinfo, COL_INFO, ", %s/%s", format->system, format->name);
 
     return tvb_captured_length(tvb);
 }
@@ -400,6 +412,9 @@ proto_register_linux_trace_event(void)
 
     // create variable data field location map
     variable_data_loc = wmem_map_new_autoreset(wmem_epan_scope(), wmem_packet_scope(), g_direct_hash, g_direct_equal);
+
+    // register subscribed fields
+    traceshark_register_field_subscription("linux_trace_event.data.common_pid");
 }
 
 void
