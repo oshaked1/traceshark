@@ -129,7 +129,7 @@ static gboolean tracecmd_parse_initial(FILE_T fh, struct tracecmd *tracecmd, int
         goto read_error;
     // make sure version is 6 (version 7 is not supported)
     if (strcmp(version, "6")) {
-        *err_info = g_strdup("unsupported version of trace.dat - only version 6 is supported");
+        *err_info = g_strdup_printf("unsupported version \"%s\" of trace.dat - only version 6 is supported", version);
         g_free(version);
         goto unsupported;
     }
@@ -738,7 +738,7 @@ static gboolean tracecmd_parse_header_end(FILE_T fh, struct tracecmd *tracecmd, 
     // make sure there are more than 0 CPUs
     if (tracecmd->num_cpus == 0) {
         *err = WTAP_ERR_BAD_FILE;
-        *err_info = g_strdup("Invalid CPU count of 0");
+        *err_info = g_strdup("invalid CPU count of 0");
         return FALSE;
     }
 
@@ -761,7 +761,7 @@ static gboolean tracecmd_parse_header_end(FILE_T fh, struct tracecmd *tracecmd, 
     // next data is latency (text trace data) - we don't support this type of data
     if (!memcmp((void *)buf, (void *)&latency, 10)) {
         *err = WTAP_ERR_UNSUPPORTED;
-        *err_info = g_strdup("Unsupported \"latency\" data");
+        *err_info = g_strdup("unsupported \"latency\" data");
         return FALSE;
     }
     
@@ -772,7 +772,7 @@ static gboolean tracecmd_parse_header_end(FILE_T fh, struct tracecmd *tracecmd, 
     }
     else {
         *err = WTAP_ERR_BAD_FILE;
-        *err_info = g_strdup("No \"flyrecord\" section");
+        *err_info = g_strdup("no \"flyrecord\" section");
         return FALSE;
     }
 
@@ -885,12 +885,12 @@ static inline enum get_record_result __tracecmd_get_record(FILE_T fh, struct tra
     switch (header.type_len) {
         case RINGBUF_TYPE_TIME_STAMP:
             *err = WTAP_ERR_UNSUPPORTED;
-            *err_info = g_strdup("Unsupported timestamp record found");
+            *err_info = g_strdup("unsupported timestamp record found");
             return GET_RECORD_RESULT_ERROR;
         
         case RINGBUF_TYPE_PADDING:
             *err = WTAP_ERR_UNSUPPORTED;
-            *err_info = g_strdup("Unsupported padding record found");
+            *err_info = g_strdup("unsupported padding record found");
             return GET_RECORD_RESULT_ERROR;
         
         case RINGBUF_TYPE_TIME_EXTEND:
