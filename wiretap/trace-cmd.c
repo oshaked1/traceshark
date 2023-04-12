@@ -26,6 +26,7 @@ struct rb_iter_state {
     guint32 current_cpu;
     guint64 current_page;
     guint64 current_ts;
+    gboolean done;
 };
 
 struct tracecmd {
@@ -986,8 +987,14 @@ static gboolean tracecmd_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err, g
     enum get_record_result res;
     struct tracecmd *tracecmd = (struct tracecmd *)wth->priv;
     struct rb_iter_state *state = (struct rb_iter_state *)&tracecmd->state;
-    struct cpu_data current_cpu_data = tracecmd->cpu_data[state->current_cpu];
-    struct event_info *event_info = g_new0(struct event_info, 1);
+    struct cpu_data current_cpu_data;
+    struct event_info *event_info;
+
+    if (state->done)
+        return FALSE;
+    
+    current_cpu_data = tracecmd->cpu_data[state->current_cpu];
+    event_info = g_new0(struct event_info, 1);
 
     do {
         res = __tracecmd_get_record(wth->fh, tracecmd, event_info, err, err_info);
@@ -1000,13 +1007,18 @@ static gboolean tracecmd_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err, g
             case GET_RECORD_RESULT_END_OF_PAGE:                
                 // make sure we haven't reached the end of the data for this CPU
                 if (next_page(state->current_page, tracecmd->page_size) >= current_cpu_data.offset + current_cpu_data.size) {
-                    // last CPU, no more events
-                    if (state->current_cpu + 1 >= tracecmd->num_cpus)
-                        goto error;
-                    
-                    // go to next CPU
-                    current_cpu_data = tracecmd->cpu_data[++state->current_cpu];
-                    state->current_page = current_cpu_data.offset;
+                    // go to next CPU, skipping CPUs with no data
+                    do {
+                        // last CPU, no more events
+                        if (state->current_cpu + 1 >= tracecmd->num_cpus) {
+                            state->done = TRUE;
+                            goto error;
+                        }
+                        
+                        current_cpu_data = tracecmd->cpu_data[++state->current_cpu];
+                        state->current_page = current_cpu_data.offset;
+                    } while (current_cpu_data.size == 0);
+
                     ws_noisy("moved to CPU %u", state->current_cpu);
                 }
 
@@ -1089,6 +1101,7 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
 {
     unsigned char buf[sizeof(tracecmd_magic)];
     struct tracecmd *tracecmd;
+    guint32 i;
 
     if (!wtap_read_bytes(wth->fh, &buf, sizeof(buf), err, err_info)) {
         // EOF
@@ -1107,11 +1120,17 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
     if (!tracecmd_parse_headers(wth->fh, tracecmd, err, err_info))
         return WTAP_OPEN_ERROR;
     
+    // find first CPU which has data
+    for (i = 0; i < tracecmd->num_cpus, tracecmd->cpu_data[i].size == 0; i++);
+    tracecmd->state.done = i == tracecmd->num_cpus ? TRUE : FALSE;
+
     // initialize event iteration state
-    tracecmd->state.current_cpu = 0;
-    tracecmd->state.current_page = tracecmd->cpu_data[0].offset;
-    if (file_seek(wth->fh, tracecmd->state.current_page, SEEK_SET, err) == -1)
-        return WTAP_OPEN_ERROR;
+    if (!tracecmd->state.done) {
+        tracecmd->state.current_cpu = i;
+        tracecmd->state.current_page = tracecmd->cpu_data[i].offset;
+        if (file_seek(wth->fh, tracecmd->state.current_page, SEEK_SET, err) == -1)
+            return WTAP_OPEN_ERROR;
+    }
     
     // initialize mapping from event offset to info
     tracecmd->events = g_hash_table_new_full(g_int64_hash, g_int64_equal, NULL, g_free);
