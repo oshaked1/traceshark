@@ -29,6 +29,10 @@ struct rb_iter_state {
     gboolean done;
 };
 
+struct options {
+    guint64 ts_offset;
+};
+
 struct tracecmd {
     gboolean big_endian;
     int long_size;
@@ -37,6 +41,7 @@ struct tracecmd {
     guint32 num_cpus;
     struct cpu_data *cpu_data;
     struct rb_iter_state state;
+    struct options options;
 
     /*
      * Event timestamps are not stored directly in the event,
@@ -668,11 +673,60 @@ static gboolean tracecmd_parse_process_info(FILE_T fh, struct tracecmd *tracecmd
     return TRUE;
 }
 
+/*
+ * from trace-cmd (lib/trace-cmd/include/private/trace-cmd-private.h)
+ */
+enum {
+	TRACECMD_OPTION_DONE,
+	TRACECMD_OPTION_DATE,
+	TRACECMD_OPTION_CPUSTAT,
+	TRACECMD_OPTION_BUFFER,
+	TRACECMD_OPTION_TRACECLOCK,
+	TRACECMD_OPTION_UNAME,
+	TRACECMD_OPTION_HOOK,
+	TRACECMD_OPTION_OFFSET,
+	TRACECMD_OPTION_CPUCOUNT,
+	TRACECMD_OPTION_VERSION,
+	TRACECMD_OPTION_PROCMAPS,
+	TRACECMD_OPTION_TRACEID,
+	TRACECMD_OPTION_TIME_SHIFT,
+	TRACECMD_OPTION_GUEST,
+};
+
+static gboolean handle_option(struct tracecmd *tracecmd, guint16 option_type, guint32 option_size, const gchar *option_data)
+{
+    guint64 epoch;
+    gchar *endptr;
+
+    switch (option_type) {
+        // option data is a 0x prefixed hex string of the epoch time corresponding to timestamp 0
+        case TRACECMD_OPTION_DATE:
+            // make sure data is null-terminated
+            if (option_data[option_size - 1] != 0)
+                return FALSE;
+            
+            epoch = g_ascii_strtoull(option_data, &endptr, 16);
+
+            // conversion error
+            if (epoch == 0 && endptr == option_data)
+                return FALSE;
+            
+            tracecmd->options.ts_offset = epoch * 1000;
+            
+            return TRUE;
+        
+        // we don't handle this option
+        default:
+            return TRUE;
+    }
+}
+
 static gboolean tracecmd_parse_options(FILE_T fh, struct tracecmd *tracecmd, int *err, gchar **err_info)
 {
     char buf[sizeof(guint32)];
     guint16 option_type;
     guint32 option_size;
+    gchar *option_data;
 
     // keep reading options until encountering option type 0
     while (TRUE) {
@@ -682,7 +736,7 @@ static gboolean tracecmd_parse_options(FILE_T fh, struct tracecmd *tracecmd, int
         option_type = tracecmd->big_endian ? pntoh16(buf) : pletoh16(buf);
 
         // option type 0 signifies end of options
-        if (option_type == 0)
+        if (option_type == TRACECMD_OPTION_DONE)
             return TRUE;
         
         // next 4 bytes hold the option size
@@ -690,10 +744,19 @@ static gboolean tracecmd_parse_options(FILE_T fh, struct tracecmd *tracecmd, int
             return FALSE;
         option_size = tracecmd->big_endian ? pntoh32(buf) : pletoh32(buf);
 
-        // Next comes the option data.
-        // We currently don't handle any options so we discard it.
-        if (!wtap_read_bytes(fh, NULL, option_size, err, err_info))
+        // next comes the option data
+        option_data = g_malloc(option_size);
+        if (!wtap_read_bytes(fh, option_data, option_size, err, err_info))
             return FALSE;
+        
+        // handle the option data
+        if (!handle_option(tracecmd, option_type, option_size, option_data)) {
+            g_free(option_data);
+            *err = WTAP_ERR_BAD_FILE;
+            *err_info = g_strdup_printf("error parsing option type %u", option_type);
+            return FALSE;
+        }
+        g_free(option_data);
     }
 }
 
@@ -948,12 +1011,15 @@ static inline enum get_record_result __tracecmd_get_record(FILE_T fh, struct tra
 static void set_rec_metadata(struct tracecmd *tracecmd, wtap_rec *rec, struct event_info *event_info)
 {
     struct event_options *options;
+    guint64 ts;
 
     rec->rec_type = REC_TYPE_FT_SPECIFIC_EVENT;
     rec->rec_header.ft_specific_header.record_type = BLOCK_TYPE_EVENT;
     rec->rec_header.ft_specific_header.record_len = event_info->size;
-    rec->ts.secs = (time_t)(event_info->ts / 1000000000);
-    rec->ts.nsecs = (int)(event_info->ts % 1000000000);
+
+    ts = event_info->ts + tracecmd->options.ts_offset;
+    rec->ts.secs = (time_t)(ts / 1000000000);
+    rec->ts.nsecs = (int)(ts % 1000000000);
     rec->presence_flags = WTAP_HAS_TS;
 
     ws_buffer_assure_space(&rec->options_buf, sizeof(struct event_options));
