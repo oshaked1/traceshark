@@ -52,6 +52,7 @@ typedef struct wtapng_block_s {
     wtap_block_t block;
     wtap_rec     *rec;
     Buffer       *frame_buffer;
+    void         *custom_data;   /* custom data, needed by Traceshark in order to avoid creating custom WTAP block types */
 } wtapng_block_t;
 
 /* Section data in private struct */

@@ -76,7 +76,12 @@ struct wtap {
     GPtrArray                   *fast_seek;
 
     /* Traceshark data */
-    GHashTable *linux_trace_event_formats;  /* A hash table of event formats for each machine.
+    GHashTable *trace_event_raw_formats;    /* A hash table of raw event format data for each
+                                             * machine and event type.
+                                             * The key is a combination of the machine ID and
+                                             * the event type, and each value is of type Buffer*.
+                                             */
+    GHashTable *linux_trace_event_formats;  /* A hash table of Linux trace event formats for each machine.
                                              * The key is the machine ID, each value is
                                              * of type struct linux_trace_event_format**.
                                              * The number of formats for each machine is
@@ -127,6 +132,13 @@ struct wtap_dumper {
      */
     const GArray            *dsbs_growing;          /**< A reference to an array of DSBs (of type wtap_block_t) */
     guint                   dsbs_growing_written;   /**< Number of already processed DSBs in dsbs_growing. */
+
+    /* Traceshark data */
+    GHashTable *trace_event_raw_formats; /* A hash table of raw event format data for each
+                                          * machine and event type.
+                                          * The key is a combination of the machine ID and
+                                          * the event type, and each value is of type Buffer*.
+                                          */
 };
 
 WS_DLL_PUBLIC gboolean wtap_dump_file_write(wtap_dumper *wdh, const void *buf,

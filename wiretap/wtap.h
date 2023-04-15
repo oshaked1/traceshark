@@ -1444,6 +1444,13 @@ typedef struct wtap_dump_params {
                                                  This array may grow since the dumper was opened and will subsequently
                                                  be written before newer packets are written in wtap_dump. */
     gboolean    dont_copy_idbs;             /**< XXX - don't copy IDBs; this should eventually always be the case. */
+
+    /* Traceshark data */
+    GHashTable *trace_event_raw_formats;    /* A hash table of raw event format data for each
+                                             * machine and event type.
+                                             * The key is a combination of the machine ID and
+                                             * the event type, and each value is of type Buffer*.
+                                             */
 } wtap_dump_params;
 
 /* Zero-initializer for wtap_dump_params. */

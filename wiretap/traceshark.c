@@ -2,6 +2,7 @@
 #include "pcapng.h"
 #include "pcapng_module.h"
 #include "wtap-int.h"
+#include "trace-cmd.h"
 
 // event block options
 enum event_block_options {
@@ -17,6 +18,14 @@ struct traceshark_event_block {
     /* ... Event Data ... */
     /* ... Padding ... */
     /* ... Options ... */
+};
+
+struct traceshark_event_format_block {
+    guint32 machine_id;
+    guint16 event_type;
+    guint32 formats_size;
+    /* ... Event Formats ... */
+    /* ... Padding ... */
 };
 
 enum option_read_result {
@@ -53,6 +62,7 @@ static gboolean process_option(wtapng_block_t *wblock, guint16 event_type, struc
         case EVENT_TYPE_LINUX_TRACE_EVENT:
             return process_linux_trace_event_option(wblock, header, value, byte_swapped);
         default:
+            ws_debug("could not process event option for unknown event type %u", event_type);
             return FALSE;
     }
 }
@@ -354,7 +364,195 @@ static gboolean traceshark_write_event_block(wtap_dumper *wdh, const wtap_rec *r
     return TRUE;
 }
 
+void free_event_formats_cb(gpointer data)
+{
+    tracecmd_free_event_formats((struct linux_trace_event_format **)data);
+}
+
+gboolean traceshark_process_event_format_data(wtap *wth, guint32 machine_id, guint16 event_type, const Buffer *format_data, gboolean byte_swapped)
+{
+    struct linux_trace_event_format **linux_trace_event_formats = NULL;
+    guint32 *pmachine_id;
+
+    switch (event_type) {
+        case EVENT_TYPE_LINUX_TRACE_EVENT:
+            linux_trace_event_formats = tracecmd_parse_event_formats_buf(format_data, byte_swapped);
+
+            if (linux_trace_event_formats == NULL)
+                return FALSE;
+
+            // make sure map of machine IDs to event formats is initialized,
+            // and populate it with the event formats for this machine.
+            if (wth->linux_trace_event_formats == NULL)
+                wth->linux_trace_event_formats = g_hash_table_new_full(g_int_hash, g_int_equal, g_free, free_event_formats_cb);
+            
+            pmachine_id = g_new(guint32, 1);
+            *pmachine_id = machine_id;
+            g_hash_table_insert(wth->linux_trace_event_formats, pmachine_id, linux_trace_event_formats);
+            return TRUE;
+        
+        default:
+            ws_debug("could not process event format data for unknown event type %u", event_type);
+            return FALSE;
+    }
+}
+
+void destroy_buffer_cb(gpointer pbuf)
+{
+    Buffer *buf = (Buffer *)pbuf;
+    ws_buffer_free(buf);
+    g_free(buf);
+}
+
+static gboolean traceshark_read_event_format_block(FILE_T fh, guint32 block_read, gboolean byte_swapped, wtapng_block_t *wblock, int *err, gchar **err_info)
+{
+    struct traceshark_event_format_block block;
+    guint32 pad_size, current_read = 0;
+    Buffer *buf = NULL;
+    struct traceshark_wblock_custom_data *custom_data;
+
+    // make sure we can read a full block header
+    if (sizeof(block) > block_read) {
+        *err_info = g_strdup_printf("traceshark: block length %u of an EFB is less than the minimum EFB size %u",
+                                        block_read, (guint32)sizeof(block));
+        goto error;
+    }
+
+    // read the block header
+    if (!wtap_read_bytes(fh, &block, sizeof(block), err, err_info))
+        return FALSE;
+    current_read += sizeof(block);
+
+    // fix byte order
+    if (byte_swapped) {
+        block.machine_id = GUINT32_SWAP_LE_BE(block.machine_id);
+        block.event_type = GUINT16_SWAP_LE_BE(block.event_type);
+        block.formats_size = GUINT32_SWAP_LE_BE(block.formats_size);
+    }
+
+    if (block.formats_size == 0) {
+        *err_info = g_strdup_printf("traceshark: empty event format data");
+        goto error;
+    }
+
+    // calculate pad size
+    if ((block.formats_size % 4) != 0)
+        pad_size = 4 - (block.formats_size % 4);
+    else
+        pad_size = 0;
+    
+    // make sure we can read the event format data
+    if (current_read + block.formats_size + pad_size > block_read) {
+        *err_info = g_strdup_printf("traceshark: remaining block length %u of an EFB is less than the formats size %u",
+                                        block_read - current_read, block.formats_size + pad_size);
+        goto error;
+    }
+
+    // read the event format data
+    buf = g_new(Buffer, 1);
+    ws_buffer_init(buf, block.formats_size);
+    if (!wtap_read_packet_bytes(fh, buf, block.formats_size, err, err_info))
+        goto cleanup;
+    ws_buffer_increase_length(buf, block.formats_size);
+    
+    current_read += block.formats_size;
+    
+    // skip over padding
+    if (!wtap_read_bytes(fh, NULL, pad_size, err, err_info))
+        goto cleanup;
+    current_read += pad_size;
+
+    // make sure there is no remaining data
+    if (current_read < block_read) {
+        *err_info = g_strdup_printf("traceshark: %u bytes of data remain after finished processing EFB", block_read - current_read);
+        goto error;
+    }
+
+    // set up custom data and add it to wblock
+    custom_data = g_new0(struct traceshark_wblock_custom_data, 1);
+    custom_data->data.event_format_data.machine_id = block.machine_id;
+    custom_data->data.event_format_data.event_type = block.event_type;
+    custom_data->data.event_format_data.format_data = buf;
+    wblock->custom_data = custom_data;
+
+    wblock->internal = TRUE;
+
+    return TRUE;
+
+error:
+    *err = WTAP_ERR_BAD_FILE;
+
+cleanup:
+    if (buf != NULL) {
+        ws_buffer_free(buf);
+        g_free(buf);
+    }
+
+    return FALSE;
+}
+
+void traceshark_write_event_format_block(gpointer key, gpointer value, gpointer user_data)
+{
+    pcapng_block_header_t bh;
+    struct traceshark_event_format_block efb;
+    guint32 pad_size;
+    const guint32 zero_pad = 0;
+    guint64 *pkey = (guint64 *)key;
+    Buffer *buf = (Buffer *)value;
+    struct dumper_cb_data *cb_data = (struct dumper_cb_data *)user_data;
+
+    // populate format block fields
+    efb.machine_id = (*pkey) >> 32;
+    efb.event_type = (*pkey) & 0xffff;
+    efb.formats_size = (guint32)ws_buffer_length(buf);
+
+    // calculate pad size
+    if (efb.formats_size % 4 != 0)
+        pad_size = 4 - efb.formats_size % 4;
+    else
+        pad_size = 0;
+    
+    bh.block_type = BLOCK_TYPE_EVENT_FORMAT;
+    bh.block_total_length = sizeof(bh) + sizeof(efb) + efb.formats_size + pad_size + 4;
+
+    // write block header
+    if (!wtap_dump_file_write(cb_data->wdh, &bh, sizeof(bh), cb_data->err))
+        return;
+    cb_data->wdh->bytes_dumped += sizeof(bh);
+
+    // write event format block
+    if (!wtap_dump_file_write(cb_data->wdh, &efb, sizeof(efb), cb_data->err))
+        return;
+    cb_data->wdh->bytes_dumped += sizeof(efb);
+
+    // write event format data
+    if (!wtap_dump_file_write(cb_data->wdh, ws_buffer_start_ptr(buf), efb.formats_size, cb_data->err))
+        return;
+    cb_data->wdh->bytes_dumped += efb.formats_size;
+
+    // write padding
+    if (!wtap_dump_file_write(cb_data->wdh, &zero_pad, pad_size, cb_data->err))
+        return;
+    cb_data->wdh->bytes_dumped += pad_size;
+    
+    // write block footer
+    if (!wtap_dump_file_write(cb_data->wdh, &bh.block_total_length, sizeof(bh.block_total_length), cb_data->err))
+        return;
+    cb_data->wdh->bytes_dumped += sizeof(bh.block_total_length);
+
+    cb_data->success = TRUE;
+}
+
+/**
+ * This is a stub block writer for block types that have no associtated records.
+*/
+static gboolean traceshark_block_writer_stub(wtap_dumper *wdh _U_, const wtap_rec *rec _U_, const guint8 *pd _U_, int *err _U_)
+{
+    return FALSE;
+}
+
 void register_traceshark(void)
 {
     register_pcapng_block_type_handler(BLOCK_TYPE_EVENT, traceshark_read_event_block, traceshark_write_event_block);
+    register_pcapng_block_type_handler(BLOCK_TYPE_EVENT_FORMAT, traceshark_read_event_format_block, traceshark_block_writer_stub);
 }
