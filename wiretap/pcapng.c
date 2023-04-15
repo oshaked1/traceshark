@@ -37,6 +37,7 @@
 #include "pcapng.h"
 #include "pcapng_module.h"
 #include "secrets-types.h"
+#include "traceshark.h"
 
 #define ROUND_TO_4BYTE(len) WS_ROUNDUP_4(len)
 
@@ -3699,6 +3700,37 @@ pcapng_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err,
                 }
                 wtap_block_unref(wblock.block);
                 break;
+            
+            /* Traceshark event format block */
+            case(BLOCK_TYPE_EVENT_FORMAT):
+                ws_debug("block type BLOCK_TYPE_EVENT_FORMAT");
+
+                struct traceshark_wblock_custom_data *custom_data = (struct traceshark_wblock_custom_data *)wblock.custom_data;
+                guint32 machine_id = custom_data->data.event_format_data.machine_id;
+                guint16 event_type = custom_data->data.event_format_data.event_type;
+                Buffer *format_data = custom_data->data.event_format_data.format_data;
+
+                // make sure map of machine ID and event type to raw event formats is initialized,
+                // and populate it with this block's event formats.
+                if (wth->trace_event_raw_formats == NULL)
+                    wth->trace_event_raw_formats = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, destroy_buffer_cb);
+
+                guint64 *key = g_new(guint64, 1);
+                *key = EVENT_FORMATS_KEY(machine_id, event_type);
+
+                g_hash_table_insert(wth->trace_event_raw_formats, key, format_data);
+
+                // process the event formats
+                if (!traceshark_process_event_format_data(wth, machine_id, event_type, format_data, current_section->byte_swapped)) {
+                    ws_debug("couldn't process event formats");
+                    g_free(custom_data);
+                    *err = WTAP_ERR_BAD_FILE;
+                    *err_info = g_strdup("couldn't process event formats");
+                    return FALSE;
+                }
+
+                g_free(custom_data);
+                break;
 
             default:
                 /* XXX - improve handling of "unknown" blocks */
@@ -6089,6 +6121,12 @@ pcapng_dump_open(wtap_dumper *wdh, int *err, gchar **err_info _U_)
                 return FALSE;
             }
         }
+    }
+
+    /* Write optional Traceshark blocks */
+    struct dumper_cb_data cb_data = { wdh, err, FALSE };
+    if (wdh->trace_event_raw_formats) {
+        g_hash_table_foreach(wdh->trace_event_raw_formats, traceshark_write_event_format_block, &cb_data);
     }
 
     return TRUE;

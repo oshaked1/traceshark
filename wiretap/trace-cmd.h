@@ -35,4 +35,8 @@ WS_DLL_PUBLIC int tracecmd_get_file_type_subtype(void);
 
 wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info);
 
+struct linux_trace_event_format **tracecmd_parse_event_formats_buf(const Buffer *format_data, gboolean byte_swapped);
+
+void tracecmd_free_event_formats(struct linux_trace_event_format **event_formats);
+
 #endif /* __TRACECMD_H__ */

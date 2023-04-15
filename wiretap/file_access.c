@@ -2358,6 +2358,10 @@ wtap_dump_init_dumper(int file_type_subtype, wtap_compression_type compression_t
 	/* Set Decryption Secrets Blocks */
 	wdh->dsbs_initial = params->dsbs_initial;
 	wdh->dsbs_growing = params->dsbs_growing;
+
+    /* Set Traceshark event format data */
+	wdh->trace_event_raw_formats = params->trace_event_raw_formats;
+
 	return wdh;
 }
 

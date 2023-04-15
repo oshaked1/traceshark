@@ -484,6 +484,11 @@ wtap_dump_params_init(wtap_dump_params *params, wtap *wth)
 	 * Refer to the DSBs from the input file, wtap_dump will then copy DSBs
 	 * as they become available. */
 	params->dsbs_growing = wth->dsbs;
+
+    /* Assume that the input handle remains open until the dumper is closed.
+	 * Refer to the event formats from the input file. */
+	params->trace_event_raw_formats = wth->trace_event_raw_formats;
+
 	params->dont_copy_idbs = FALSE;
 }
 
@@ -508,6 +513,11 @@ wtap_dump_params_init_no_idbs(wtap_dump_params *params, wtap *wth)
 	 * Refer to the DSBs from the input file, wtap_dump will then copy DSBs
 	 * as they become available. */
 	params->dsbs_growing = wth->dsbs;
+
+    /* Assume that the input handle remains open until the dumper is closed.
+	 * Refer to the event formats from the input file. */
+	params->trace_event_raw_formats = wth->trace_event_raw_formats;
+    
 	params->dont_copy_idbs = TRUE;
 }
 
@@ -1474,6 +1484,9 @@ wtap_close(wtap *wth)
 
     if (wth->linux_trace_event_formats != NULL)
         g_hash_table_destroy(wth->linux_trace_event_formats);
+    
+    if (wth->trace_event_raw_formats != NULL)
+        g_hash_table_destroy(wth->trace_event_raw_formats);
 
     g_free(wth);
 }
