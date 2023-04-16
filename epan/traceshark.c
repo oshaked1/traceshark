@@ -189,6 +189,7 @@ proto_item *traceshark_proto_tree_add_item(proto_tree *tree, int hfindex, tvbuff
             break;
         case FT_INT64:
             fvalue_set_sinteger64(fv, val.s64);
+            break;
         case FT_UINT64:
         case FT_BOOLEAN:
             fvalue_set_uinteger64(fv, val.u64);

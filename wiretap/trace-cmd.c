@@ -1357,7 +1357,7 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
         return WTAP_OPEN_ERROR;
     
     // find first CPU which has data
-    for (i = 0; i < tracecmd->num_cpus, tracecmd->cpu_data[i].size == 0; i++);
+    for (i = 0; i < tracecmd->num_cpus && tracecmd->cpu_data[i].size == 0; i++);
     tracecmd->state.done = i == tracecmd->num_cpus ? TRUE : FALSE;
 
     // initialize event iteration state
