@@ -3552,6 +3552,10 @@ pcapng_open(wtap *wth, int *err, gchar **err_info)
         ws_debug("Read IDB number_of_interfaces %u, wtap_encap %i",
                  wth->interface_data->len, wth->file_encap);
     }
+
+    // Traceshark - initialize map of machine ID and event type to raw event formats
+    wth->trace_event_raw_formats = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, destroy_buffer_cb);
+
     return WTAP_OPEN_MINE;
 }
 
@@ -3710,14 +3714,9 @@ pcapng_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err,
                 guint16 event_type = custom_data->data.event_format_data.event_type;
                 Buffer *format_data = custom_data->data.event_format_data.format_data;
 
-                // make sure map of machine ID and event type to raw event formats is initialized,
-                // and populate it with this block's event formats.
-                if (wth->trace_event_raw_formats == NULL)
-                    wth->trace_event_raw_formats = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, destroy_buffer_cb);
-
+                // populate raw event formats map with this block's formats
                 guint64 *key = g_new(guint64, 1);
                 *key = EVENT_FORMATS_KEY(machine_id, event_type);
-
                 g_hash_table_insert(wth->trace_event_raw_formats, key, format_data);
 
                 // process the event formats
@@ -5944,6 +5943,8 @@ static gboolean pcapng_add_idb(wtap_dumper *wdh, wtap_block_t idb,
 	return pcapng_write_if_descr_block(wdh, idb_copy, err);
 }
 
+static gboolean no_records_dumped = TRUE;
+
 static gboolean pcapng_dump(wtap_dumper *wdh,
                             const wtap_rec *rec,
                             const guint8 *pd, int *err, gchar **err_info)
@@ -5951,6 +5952,15 @@ static gboolean pcapng_dump(wtap_dumper *wdh,
 #ifdef HAVE_PLUGINS
     block_handler *handler;
 #endif
+
+    /* Before writing the first record, write any optional Traceshark blocks */
+    if (no_records_dumped) {
+        struct dumper_cb_data cb_data = { wdh, err, FALSE };
+        if (wdh->trace_event_raw_formats) {
+            g_hash_table_foreach(wdh->trace_event_raw_formats, traceshark_write_event_format_block, &cb_data);
+        }
+        no_records_dumped = FALSE;
+    }
 
     /* Write (optional) Decryption Secrets Blocks that were collected while
      * reading packet blocks. */
@@ -6123,12 +6133,6 @@ pcapng_dump_open(wtap_dumper *wdh, int *err, gchar **err_info _U_)
         }
     }
 
-    /* Write optional Traceshark blocks */
-    struct dumper_cb_data cb_data = { wdh, err, FALSE };
-    if (wdh->trace_event_raw_formats) {
-        g_hash_table_foreach(wdh->trace_event_raw_formats, traceshark_write_event_format_block, &cb_data);
-    }
-
     return TRUE;
 }
 
@@ -6164,7 +6168,6 @@ gboolean pcapng_encap_is_ft_specific(int encap)
 {
     switch (encap) {
     case WTAP_ENCAP_SYSTEMD_JOURNAL:
-    case WTAP_ENCAP_TRACESHARK:
         return TRUE;
     }
     return FALSE;

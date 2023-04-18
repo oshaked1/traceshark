@@ -1375,7 +1375,7 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
     wth->subtype_read = tracecmd_read;
     wth->subtype_seek_read = tracecmd_seek_read;
     wth->subtype_close = tracecmd_close;
-    wth->file_encap = WTAP_ENCAP_TRACESHARK;
+    wth->file_encap = WTAP_ENCAP_NULL;
     wth->file_tsprec = WTAP_TSPREC_NSEC;
     wth->snapshot_length = 0;
     wth->priv = tracecmd;

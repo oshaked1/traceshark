@@ -506,6 +506,8 @@ void traceshark_write_event_format_block(gpointer key, gpointer value, gpointer 
     efb.event_type = (*pkey) & 0xffff;
     efb.formats_size = (guint32)ws_buffer_length(buf);
 
+    ws_debug("adding event format block for machine ID %u and event type %u", efb.machine_id, efb.event_type);
+
     // calculate pad size
     if (efb.formats_size % 4 != 0)
         pad_size = 4 - efb.formats_size % 4;
