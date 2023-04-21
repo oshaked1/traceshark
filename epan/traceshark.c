@@ -1,12 +1,6 @@
 #include "traceshark.h"
 #include <wiretap/traceshark.h>
 
-const value_string traceshark_event_types[] = {
-    { EVENT_TYPE_UNKNOWN, "Unknown" },
-    { EVENT_TYPE_LINUX_TRACE_EVENT, "Linux Trace Event" },
-    { 0, "NULL" }
-};
-
 wmem_map_t *subscribed_fields = NULL;
 wmem_map_t *subscribed_field_values = NULL;
 
@@ -42,26 +36,36 @@ void traceshark_register_field_subscription(gchar *filter_name)
         subscribed_field_values = wmem_map_new_autoreset(wmem_epan_scope(), wmem_packet_scope(), g_str_hash, g_str_equal);
         wmem_register_callback(wmem_packet_scope(), subscribed_field_values_destroy_cb, NULL);
     }
+
+    // check if there is already a subscription for this field
+    if (wmem_map_contains(subscribed_fields, filter_name))
+        return;
     
     // add field to subscription map
-    key = wmem_alloc(wmem_epan_scope(), strlen(filter_name) + 1);
-    strcpy(key, filter_name);
+    key = wmem_strdup(wmem_epan_scope(), filter_name);
     wmem_map_insert(subscribed_fields, key, NULL);
 }
 
-wmem_array_t *traceshark_fetch_subscribed_field_values(gchar *filter_name)
+wmem_array_t *traceshark_subscribed_field_get_values(gchar *filter_name)
 {
     return wmem_map_lookup(subscribed_field_values, filter_name);
 }
 
-fvalue_t *traceshark_fetch_subscribed_field_single_value(gchar *filter_name)
+fvalue_t *traceshark_subscribed_field_get_single_value_or_null(gchar *filter_name)
 {
-    wmem_array_t *values = traceshark_fetch_subscribed_field_values(filter_name);
+    wmem_array_t *values = traceshark_subscribed_field_get_values(filter_name);
 
     if (values && wmem_array_get_count(values) >= 1)
         return *((fvalue_t **)wmem_array_index(values, 0));
     
     return NULL;
+}
+
+fvalue_t *traceshark_subscribed_field_get_single_value(gchar *filter_name)
+{
+    fvalue_t *fv = traceshark_subscribed_field_get_single_value_or_null(filter_name);
+    DISSECTOR_ASSERT_HINT(fv != NULL, wmem_strdup_printf(wmem_packet_scope(), "Could not fetch value for subscribed field %s", filter_name));
+    return fv;
 }
 
 static gboolean has_subscription(header_field_info *hf)
@@ -78,7 +82,7 @@ static gboolean has_subscription(header_field_info *hf)
     return wmem_map_contains(subscribed_fields, hf->abbrev);
 }
 
-#define traceshark_handle_field_subscription(hfindex, value, fvalue_set_func) \
+#define traceshark_handle_field_subscription(hfindex, value, fvalue_set_func) { \
     /* get field info */ \
     header_field_info *_hf = proto_registrar_get_nth(hfindex); \
     \
@@ -101,7 +105,8 @@ static gboolean has_subscription(header_field_info *hf)
             wmem_array_append_one(_values, _fv); \
             wmem_map_insert(subscribed_field_values, _hf->abbrev, _values); \
         } \
-    }
+    } \
+}
 
 proto_item *traceshark_proto_tree_add_item(proto_tree *tree, int hfindex, tvbuff_t *tvb, const gint start, gint length, const guint encoding)
 {
@@ -221,10 +226,28 @@ proto_item *traceshark_proto_tree_add_item(proto_tree *tree, int hfindex, tvbuff
     return item;
 }
 
+proto_item *traceshark_proto_tree_add_int(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, gint32 value)
+{
+    traceshark_handle_field_subscription(hfindex, value, fvalue_set_sinteger);
+    return proto_tree_add_int(tree, hfindex, tvb, start, length, value);
+}
+
 proto_item *traceshark_proto_tree_add_uint(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, guint32 value)
 {    
     traceshark_handle_field_subscription(hfindex, value, fvalue_set_uinteger);
     return proto_tree_add_uint(tree, hfindex, tvb, start, length, value);
+}
+
+proto_item *traceshark_proto_tree_add_int64(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, gint64 value)
+{
+    traceshark_handle_field_subscription(hfindex, value, fvalue_set_sinteger64);
+    return proto_tree_add_int64(tree, hfindex, tvb, start, length, value);
+}
+
+proto_item *traceshark_proto_tree_add_uint64(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, guint64 value)
+{
+    traceshark_handle_field_subscription(hfindex, value, fvalue_set_uinteger64);
+    return proto_tree_add_uint64(tree, hfindex, tvb, start, length, value);
 }
 
 proto_item *traceshark_proto_tree_add_string(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, const char* value)

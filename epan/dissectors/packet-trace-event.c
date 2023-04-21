@@ -13,11 +13,18 @@ static int proto_frame = -1;
 static int hf_machine_id = -1;
 static int hf_event_type = -1;
 
-static int
-dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+const value_string traceshark_event_types[] = {
+    { EVENT_TYPE_UNKNOWN, "Unknown" },
+    { EVENT_TYPE_LINUX_TRACE_EVENT, "Linux Trace Event" },
+    { 0, "NULL" }
+};
+
+static int dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
     proto_tree *frame_tree;
     struct event_options *metadata;
+    struct traceshark_dissector_data *dissector_data;
+    dissector_handle_t event_type_dissector;
     
     DISSECTOR_ASSERT_HINT(pinfo->rec->rec_type == REC_TYPE_FT_SPECIFIC_EVENT, "Exptected REC_TYPE_FT_SPECIFIC_EVENT record");
     metadata = (struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf);
@@ -34,11 +41,18 @@ dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *d
     }
 
     // call dissector for this event type
-    return dissector_try_uint(event_type_dissector_table, metadata->event_type, tvb, pinfo, tree);
+    if ((event_type_dissector = dissector_get_uint_handle(event_type_dissector_table, metadata->event_type)) == NULL)
+        return 0;
+    
+    // initialize dissector data to be passed to next dissector
+    dissector_data = wmem_new0(pinfo->pool, struct traceshark_dissector_data);
+    dissector_data->machine_id = metadata->machine_id;
+    dissector_data->event_type = metadata->event_type;
+    
+    return call_dissector_only(event_type_dissector, tvb, pinfo, tree, dissector_data);
 }
 
-void
-proto_register_trace_event(void)
+void proto_register_trace_event(void)
 {
     static hf_register_info frame_hf[] = {
         { &hf_machine_id,
@@ -59,8 +73,7 @@ proto_register_trace_event(void)
     event_type_dissector_table = register_dissector_table("frame.event_type", "Trace Event Type", proto_trace_event, FT_UINT16, BASE_DEC);
 }
 
-void
-proto_reg_handoff_trace_event(void)
+void proto_reg_handoff_trace_event(void)
 {
     dissector_handle_t trace_event_handle;
 

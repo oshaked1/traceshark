@@ -4,11 +4,14 @@
 
 static int proto_linux_trace_event = -1;
 
+static dissector_table_t event_system_and_name_dissector_table;
+
 static int hf_big_endian = -1;
 static int hf_cpu = -1;
 static int hf_event_id = -1;
 static int hf_event_name = -1;
 static int hf_event_system = -1;
+static int hf_event_system_and_name = -1;
 
 static gint ett_linux_trace_event = -1;
 static gint ett_common_fields = -1;
@@ -303,7 +306,7 @@ static void dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *co
     }
 }
 
-static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
+static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
     proto_item *linux_trace_event_item, *item;
     proto_tree *linux_trace_event_tree, *common_fields_tree, *event_specific_fields_tree;
@@ -312,8 +315,11 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     guint encoding;
     guint16 event_id;
     const struct linux_trace_event_format *format;
+    size_t system_and_name_len;
+    gchar *system_and_name;
     struct dynamic_hf *dynamic_hf;
     fvalue_t *pid_val;
+    struct traceshark_dissector_data *dissector_data = (struct traceshark_dissector_data *)data;
 
     metadata = (struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf);
     linux_trace_event_metadata = &metadata->type_specific_options.linux_trace_event;
@@ -336,11 +342,20 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     // dissect event ID and fetch the event format
     item = traceshark_proto_tree_add_item(linux_trace_event_tree, hf_event_id, tvb, 0, 2, encoding);
     event_id = tvb_get_guint16(tvb, 0, encoding);
-    format = epan_get_linux_trace_event_format(pinfo->epan, metadata->machine_id, event_id);
+
+    format = epan_get_linux_trace_event_format(pinfo->epan, dissector_data->machine_id, event_id);
     DISSECTOR_ASSERT_HINT(format != NULL, "Could not fetch event format");
+
     item = traceshark_proto_tree_add_string(linux_trace_event_tree, hf_event_system, tvb, 0, 2, format->system);
     proto_item_set_generated(item);
+
     item = traceshark_proto_tree_add_string(linux_trace_event_tree, hf_event_name, tvb, 0, 2, format->name);
+    proto_item_set_generated(item);
+
+    system_and_name_len = strlen(format->system) + 1 + strlen(format->name) + 1;
+    system_and_name = wmem_alloc(pinfo->pool, system_and_name_len);
+    g_snprintf(system_and_name, (gulong)system_and_name_len, "%s/%s", format->system, format->name);
+    item = traceshark_proto_tree_add_string(linux_trace_event_tree, hf_event_system_and_name, tvb, 0, 2, system_and_name);
     proto_item_set_generated(item);
 
     // add subtrees for common fields and event specific fields
@@ -348,24 +363,26 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     event_specific_fields_tree = proto_tree_add_subtree(linux_trace_event_tree, tvb, 0, -1, ett_event_specific_fields, NULL, "Event Specific Fields");
 
     // get dynamic field array
-    dynamic_hf = get_dynamic_hf(metadata->machine_id, event_id, format);
+    dynamic_hf = get_dynamic_hf(dissector_data->machine_id, event_id, format);
 
     // dissect event according to format
     dissect_event_data(tvb, pinfo, common_fields_tree, event_specific_fields_tree, format, dynamic_hf, encoding);
 
     // add PID to info column
-    pid_val = traceshark_fetch_subscribed_field_single_value("linux_trace_event.data.common_pid");
+    pid_val = traceshark_subscribed_field_get_single_value_or_null("linux_trace_event.data.common_pid");
     if (pid_val)
         col_append_fstr(pinfo->cinfo, COL_INFO, ", PID = %d", fvalue_get_sinteger(pid_val));
 
     // add event system and name to info column
-    col_append_fstr(pinfo->cinfo, COL_INFO, ", %s/%s", format->system, format->name);
+    col_append_fstr(pinfo->cinfo, COL_INFO, ", %s", system_and_name);
+
+    // call dissector for this event
+    dissector_try_string(event_system_and_name_dissector_table, system_and_name, tvb, pinfo, tree, dissector_data);
 
     return tvb_captured_length(tvb);
 }
 
-void
-proto_register_linux_trace_event(void)
+void proto_register_linux_trace_event(void)
 {
     static gint *ett[] = {
         &ett_linux_trace_event,
@@ -392,12 +409,17 @@ proto_register_linux_trace_event(void)
         { &hf_event_name,
           { "Event Name", "linux_trace_event.name",
           FT_STRINGZ, BASE_NONE, NULL, 0,
-          "Event Name", HFILL }
+          "Event name", HFILL }
         },
         { &hf_event_system,
           { "Event System", "linux_trace_event.system",
           FT_STRINGZ, BASE_NONE, NULL, 0,
-          "Event System", HFILL }
+          "Event system", HFILL }
+        },
+        { &hf_event_system_and_name,
+          { "Event System and Name", "linux_trace_event.system_name",
+          FT_STRINGZ, BASE_NONE, NULL, 0,
+          "Event system and name", HFILL }
         }
     };
     
@@ -415,10 +437,13 @@ proto_register_linux_trace_event(void)
 
     // register subscribed fields
     traceshark_register_field_subscription("linux_trace_event.data.common_pid");
+
+    // register event system and name dissector table
+    event_system_and_name_dissector_table = register_dissector_table("linux_trace_event.system_name",
+        "Linux trace event system and name", proto_linux_trace_event, FT_STRINGZ, FALSE);
 }
 
-void
-proto_reg_handoff_linux_trace_event(void)
+void proto_reg_handoff_linux_trace_event(void)
 {
     static dissector_handle_t linux_trace_event_handle;
 
