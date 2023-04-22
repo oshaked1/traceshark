@@ -32,10 +32,6 @@ static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_
     proto_item *process_item;
     proto_tree *process_tree;
     const gchar *event_str;
-    fvalue_t *fv;
-    union pid pid;
-
-    dissector_data->process = wmem_new0(pinfo->pool, struct traceshark_process);
 
     process_item = proto_tree_add_item(tree, proto_process, tvb, 0, 0, ENC_NA);
     process_tree = proto_item_add_subtree(process_item, ett_process);
@@ -50,11 +46,8 @@ static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_
 
     switch (dissector_data->event_type) {
         case EVENT_TYPE_LINUX_TRACE_EVENT:
-            fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.common_pid");
-            pid.linux = fvalue_get_sinteger(fv);
-            traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, pid.linux);
-            dissector_data->process->pid.linux = pid.linux;
-            col_append_fstr(pinfo->cinfo, COL_INFO, ": PID %d", pid.linux);
+            traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, dissector_data->process->pid.linux);
+            col_append_fstr(pinfo->cinfo, COL_INFO, ": PID %d", dissector_data->process->pid.linux);
             break;
         default:
             DISSECTOR_ASSERT_NOT_REACHED();
@@ -183,7 +176,6 @@ void proto_register_process(void)
     proto_register_subtree_array(ett, array_length(ett));
 
     // register subscribed fields
-    traceshark_register_field_subscription("linux_trace_event.data.common_pid");
     traceshark_register_field_subscription("linux_trace_event.data.syscalls.sys_enter_exit_group.error_code");
     traceshark_register_field_subscription("linux_trace_event.data.sched.sched_process_exec.filename");
     traceshark_register_field_subscription("linux_trace_event.data.sched.sched_process_exec.old_pid");
