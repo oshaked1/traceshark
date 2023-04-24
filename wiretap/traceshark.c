@@ -390,7 +390,7 @@ static gboolean write_machine_info_options(wtap_dumper *wdh, const struct traces
 
     // write hostname option
     if (machine_info->hostname != NULL) {
-        if (!write_option(wdh, OPT_MIB_HOSTNAME, strlen(machine_info->hostname) + 1, machine_info->hostname, err))
+        if (!write_option(wdh, OPT_MIB_HOSTNAME, (guint32)strlen(machine_info->hostname) + 1, machine_info->hostname, err))
             return FALSE;
     }
     
@@ -403,7 +403,7 @@ static gboolean write_machine_info_options(wtap_dumper *wdh, const struct traces
 
     // write os version option
     if (machine_info->os_version != NULL) {
-        if (!write_option(wdh, OPT_MIB_OS_VERSION, strlen(machine_info->os_version) + 1, machine_info->os_version, err))
+        if (!write_option(wdh, OPT_MIB_OS_VERSION, (guint32)strlen(machine_info->os_version) + 1, machine_info->os_version, err))
             return FALSE;
     }
 
@@ -781,7 +781,7 @@ static guint32 compute_machine_info_block_options_size(struct traceshark_machine
     // hostname
     if (machine_info->hostname != NULL) {
         num_options++;
-        options_data_size += strlen(machine_info->hostname) + 1;
+        options_data_size += (guint32)strlen(machine_info->hostname) + 1;
 
         // pad to 32-bit boundary
         if (options_data_size % 4 != 0)
@@ -798,7 +798,7 @@ static guint32 compute_machine_info_block_options_size(struct traceshark_machine
     // OS version
     if (machine_info->os_version != NULL) {
         num_options++;
-        options_data_size += strlen(machine_info->os_version) + 1;
+        options_data_size += (guint32)strlen(machine_info->os_version) + 1;
 
         // pad to 32-bit boundary
         if (options_data_size % 4 != 0)

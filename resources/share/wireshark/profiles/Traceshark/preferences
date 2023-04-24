@@ -10,5 +10,5 @@ gui.column.format:
 	"Destination", "%d",
 	"Protocol", "%p",
 	"Length", "%L",
-    "PID", "%Cus:frame.pid:0:R",
+    "PID", "%Cus:frame.pid_name:0:R",
 	"Info", "%i"

@@ -6,6 +6,7 @@ static int proto_process = -1;
 
 static int hf_event = -1;
 static int hf_pid_linux = -1;
+static int hf_name = -1;
 static int hf_error_code = -1;
 static int hf_exec_file = -1;
 static int hf_old_pid_linux = -1;
@@ -14,12 +15,6 @@ static int hf_child_name = -1;
 
 static gint ett_process = -1;
 
-enum process_events {
-    PROCESS_FORK,
-    PROCESS_EXEC,
-    PROCESS_EXIT
-};
-
 const value_string process_events[] = {
     { PROCESS_FORK, "Fork" },
     { PROCESS_EXEC, "Exec" },
@@ -27,7 +22,7 @@ const value_string process_events[] = {
     { 0, "NULL" }
 };
 
-static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, struct traceshark_dissector_data *dissector_data, enum process_events event)
+static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, struct traceshark_dissector_data *dissector_data, enum process_event_type event)
 {
     proto_item *process_item;
     proto_tree *process_tree;
@@ -44,6 +39,7 @@ static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_
 
     traceshark_proto_tree_add_uint(process_tree, hf_event, tvb, 0, 0, event);
 
+    // add PID according to its type
     switch (dissector_data->event_type) {
         case EVENT_TYPE_LINUX_TRACE_EVENT:
             traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, dissector_data->process->pid._linux);
@@ -51,6 +47,12 @@ static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_
             break;
         default:
             DISSECTOR_ASSERT_NOT_REACHED();
+    }
+
+    // add process name
+    if (dissector_data->process->name != NULL) {
+        traceshark_proto_tree_add_string(process_tree, hf_name, tvb, 0, 0, dissector_data->process->name);
+        col_append_fstr(pinfo->cinfo, COL_INFO, " (%s)", dissector_data->process->name);
     }
 
     return process_tree;
@@ -63,19 +65,27 @@ static int dissect_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     fvalue_t *fv;
     union pid child_pid;
     const gchar *child_name;
-
-    process_tree = dissect_common_info(tvb, pinfo, tree, dissector_data, PROCESS_FORK);
+    struct fork_event fork_info;
 
     // get child PID
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.task.task_newtask.pid");
     child_pid._linux = fvalue_get_sinteger(fv);
-    traceshark_proto_tree_add_int(process_tree, hf_child_pid_linux, tvb, 0, 0, child_pid._linux);
 
     // get child name
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.task.task_newtask.comm");
     child_name = wmem_strbuf_get_str(fvalue_get_strbuf(fv));
-    traceshark_proto_tree_add_string(process_tree, hf_child_name, tvb, 0, 0, child_name);
 
+    // update PID lifecycle with this event
+    if (!pinfo->fd->visited) {
+        fork_info.parent_pid = dissector_data->process->pid;
+        fork_info.child_pid = child_pid;
+        fork_info.child_name = child_name;
+        dissector_data->process = traceshark_update_process_fork(dissector_data->machine_id, dissector_data->process->pid, &pinfo->abs_ts, &fork_info);
+    }
+
+    process_tree = dissect_common_info(tvb, pinfo, tree, dissector_data, PROCESS_FORK);
+    traceshark_proto_tree_add_int(process_tree, hf_child_pid_linux, tvb, 0, 0, child_pid._linux);
+    traceshark_proto_tree_add_string(process_tree, hf_child_name, tvb, 0, 0, child_name);
     col_append_fstr(pinfo->cinfo, COL_INFO, " has spawned a new child with PID %d (%s)", child_pid._linux, child_name);
 
     return 0;
@@ -143,6 +153,11 @@ void proto_register_process(void)
           { "PID", "process.pid",
             FT_INT32, BASE_DEC, NULL, 0,
             "Linux process ID (identifies a thread)", HFILL }
+        },
+        { &hf_name,
+          { "Name", "process.name",
+            FT_STRINGZ, BASE_NONE, NULL, 0,
+            "Process name", HFILL }
         },
         { &hf_error_code,
           { "Exit Code", "process.error_code",
