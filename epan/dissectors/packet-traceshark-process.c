@@ -27,7 +27,7 @@ const value_string process_events[] = {
     { 0, "NULL" }
 };
 
-static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, struct traceshark_dissector_data *dissector_data, enum process_event event)
+static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, struct traceshark_dissector_data *dissector_data, enum process_events event)
 {
     proto_item *process_item;
     proto_tree *process_tree;
@@ -46,8 +46,8 @@ static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_
 
     switch (dissector_data->event_type) {
         case EVENT_TYPE_LINUX_TRACE_EVENT:
-            traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, dissector_data->process->pid.linux);
-            col_append_fstr(pinfo->cinfo, COL_INFO, ": PID %d", dissector_data->process->pid.linux);
+            traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, dissector_data->process->pid._linux);
+            col_append_fstr(pinfo->cinfo, COL_INFO, ": PID %d", dissector_data->process->pid._linux);
             break;
         default:
             DISSECTOR_ASSERT_NOT_REACHED();
@@ -68,15 +68,15 @@ static int dissect_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
 
     // get child PID
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.task.task_newtask.pid");
-    child_pid.linux = fvalue_get_sinteger(fv);
-    traceshark_proto_tree_add_int(process_tree, hf_child_pid_linux, tvb, 0, 0, child_pid.linux);
+    child_pid._linux = fvalue_get_sinteger(fv);
+    traceshark_proto_tree_add_int(process_tree, hf_child_pid_linux, tvb, 0, 0, child_pid._linux);
 
     // get child name
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.task.task_newtask.comm");
     child_name = wmem_strbuf_get_str(fvalue_get_strbuf(fv));
     traceshark_proto_tree_add_string(process_tree, hf_child_name, tvb, 0, 0, child_name);
 
-    col_append_fstr(pinfo->cinfo, COL_INFO, " has spawned a new child with PID %d (%s)", child_pid.linux, child_name);
+    col_append_fstr(pinfo->cinfo, COL_INFO, " has spawned a new child with PID %d (%s)", child_pid._linux, child_name);
 
     return 0;
 }
@@ -100,11 +100,11 @@ static int dissect_process_exec(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
 
     // get old PID
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.sched.sched_process_exec.old_pid");
-    old_pid.linux = fvalue_get_sinteger(fv);
-    traceshark_proto_tree_add_int(process_tree, hf_old_pid_linux, tvb, 0, 0, old_pid.linux);
+    old_pid._linux = fvalue_get_sinteger(fv);
+    traceshark_proto_tree_add_int(process_tree, hf_old_pid_linux, tvb, 0, 0, old_pid._linux);
 
-    if (old_pid.linux != dissector_data->process->pid.linux)
-        col_append_fstr(pinfo->cinfo, COL_INFO, " (exec was called from thread with PID %d, which inherited PID %d of the main thread)", old_pid.linux, dissector_data->process->pid.linux);
+    if (old_pid._linux != dissector_data->process->pid._linux)
+        col_append_fstr(pinfo->cinfo, COL_INFO, " (exec was called from thread with PID %d, which inherited PID %d of the main thread)", old_pid._linux, dissector_data->process->pid._linux);
 
     return 0;
 }

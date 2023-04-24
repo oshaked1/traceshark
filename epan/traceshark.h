@@ -7,7 +7,7 @@
 // differentiate between Linux PIDs which are a signed 32-bit value
 // and Windows PIDs which are an unsigned 32-bit value
 union pid {
-    gint32 linux;
+    gint32 _linux; // the Linux build environment predefines "linux" so we can't use it
     guint32 windows;
     guint32 raw;
 };

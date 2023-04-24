@@ -5,7 +5,7 @@
 gui.column.format:
 	"No.", "%m",
 	"Time", "%t",
-    "Machine", "%Cus:frame.machine_id:0:R",
+    "Machine", "%Cus:frame.machine.id_hostname:0:R",
 	"Source", "%s",
 	"Destination", "%d",
 	"Protocol", "%p",

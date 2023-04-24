@@ -8,7 +8,7 @@
 
 static const unsigned char tracecmd_magic[3] = { 0x17, 0x08, 0x44 };
 
-static const guint32 machine_id = 0; // trace-cmd files contain events from a single system
+static const guint32 machine_id = 1; // trace-cmd files contain events from a single system
 
 static int tracecmd_file_type_subtype = -1;
 
@@ -31,6 +31,9 @@ struct rb_iter_state {
 
 struct options {
     guint64 ts_offset;
+    gchar *hostname;
+    gchar *kernel_version;
+    gchar *machine_arch;
 };
 
 struct tracecmd {
@@ -40,10 +43,10 @@ struct tracecmd {
     gint64 formats_start_offset;
     unsigned int formats_len;
     struct linux_trace_event_format *event_formats[MAX_EVENT + 1];
+    struct options options;
     guint32 num_cpus;
     struct cpu_data *cpu_data;
     struct rb_iter_state state;
-    struct options options;
 
     /*
      * Event timestamps are not stored directly in the event,
@@ -255,7 +258,7 @@ read_error:
     return FALSE;
 }
 
-void tracecmd_free_event_format(struct linux_trace_event_format *format)
+static void tracecmd_free_event_format(struct linux_trace_event_format *format)
 {
     struct linux_trace_event_field *curr, *next;
 
@@ -823,14 +826,17 @@ enum {
 	TRACECMD_OPTION_GUEST,
 };
 
-static gboolean handle_option(struct tracecmd *tracecmd, guint16 option_type, guint32 option_size, const gchar *option_data)
+static gboolean tracecmd_handle_option(struct tracecmd *tracecmd, guint16 option_type, guint32 option_size, const gchar *option_data)
 {
     guint64 epoch;
     gchar *endptr;
+    gchar **parts;
 
     switch (option_type) {
         // option data is a 0x prefixed hex string of the epoch time corresponding to timestamp 0
         case TRACECMD_OPTION_DATE:
+            ws_debug("option_type = TRACECMD_OPTION_DATE");
+
             // make sure data is null-terminated
             if (option_data[option_size - 1] != 0)
                 return FALSE;
@@ -842,11 +848,33 @@ static gboolean handle_option(struct tracecmd *tracecmd, guint16 option_type, gu
                 return FALSE;
             
             tracecmd->options.ts_offset = epoch * 1000;
+
+            ws_debug("ts_offset = %lu", tracecmd->options.ts_offset);
             
+            return TRUE;
+        
+        case TRACECMD_OPTION_UNAME:
+            ws_debug("option_type = TRACECMD_OPTION_UNAME");
+
+            // make sure data is null-terminated
+            if (option_data[option_size - 1] != 0)
+                return FALSE;
+            
+            parts = g_strsplit(option_data, " ", 4);
+            
+            tracecmd->options.hostname = g_strdup(parts[1]);
+            tracecmd->options.kernel_version = g_strdup(parts[2]);
+            tracecmd->options.machine_arch = g_strdup(parts[3]);
+
+            g_strfreev(parts);
+
+            ws_debug("hostname: %s, kernel version: %s, arch: %s", tracecmd->options.hostname, tracecmd->options.kernel_version, tracecmd->options.machine_arch);
+
             return TRUE;
         
         // we don't handle this option
         default:
+            ws_debug("unsupported option type %u, ignoring", option_type);
             return TRUE;
     }
 }
@@ -880,7 +908,7 @@ static gboolean tracecmd_parse_options(FILE_T fh, struct tracecmd *tracecmd, int
             return FALSE;
         
         // handle the option data
-        if (!handle_option(tracecmd, option_type, option_size, option_data)) {
+        if (!tracecmd_handle_option(tracecmd, option_type, option_size, option_data)) {
             g_free(option_data);
             *err = WTAP_ERR_BAD_FILE;
             *err_info = g_strdup_printf("error parsing option type %u", option_type);
@@ -1325,8 +1353,30 @@ static void tracecmd_close(wtap *wth)
             tracecmd_free_event_format(tracecmd->event_formats[i]);
     }
 
+    g_free(tracecmd->options.hostname);
+    g_free(tracecmd->options.kernel_version);
+    g_free(tracecmd->options.machine_arch);
+
     g_free(tracecmd->cpu_data);
     g_hash_table_destroy(tracecmd->events);
+}
+
+static struct traceshark_machine_info_data *tracecmd_generate_machine_info_block(struct tracecmd *tracecmd)
+{
+    struct traceshark_machine_info_data *machine_info = g_new0(struct traceshark_machine_info_data, 1);
+
+    machine_info->machine_id = machine_id;
+    machine_info->hostname = g_strdup(tracecmd->options.hostname);
+    machine_info->os_type = OS_LINUX;
+    machine_info->os_version = g_strdup(tracecmd->options.kernel_version);
+    machine_info->num_cpus = tracecmd->num_cpus;
+
+    if (tracecmd->options.machine_arch != NULL) {
+        if (strcmp(tracecmd->options.machine_arch, "x86_64") == 0)
+            machine_info->arch = ARCH_X86_64;
+    }
+
+    return machine_info;
 }
 
 wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
@@ -1387,6 +1437,10 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
 
     // add generated IDB (required so the file can be written as pcapng)
     wtap_add_generated_idb(wth);
+
+    // add machine info to wtap so it can be dumped later as a machine info block
+    wth->machines = g_hash_table_new_full(g_int_hash, g_int_equal, NULL, free_machine_info_data_cb);
+    g_hash_table_insert(wth->machines, (gpointer)&machine_id, tracecmd_generate_machine_info_block(tracecmd));
 
     return WTAP_OPEN_MINE;
 }

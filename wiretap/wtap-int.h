@@ -87,6 +87,10 @@ struct wtap {
                                              * The number of formats for each machine is
                                              * always 65536 (2^16 - the number of possible events).
                                              */
+    GHashTable *machines;                   /* A hash table of machine ID to a
+                                             * struct traceshark_machine_info_data
+                                             * with information on that machine.
+                                             */
 };
 
 struct wtap_dumper;
@@ -139,6 +143,10 @@ struct wtap_dumper {
                                           * The key is a combination of the machine ID and
                                           * the event type, and each value is of type Buffer*.
                                           */
+    GHashTable *machines;                 /* A hash table of machine ID to a
+                                           * struct traceshark_machine_info_data
+                                           * with information on that machine.
+                                           */
 };
 
 WS_DLL_PUBLIC gboolean wtap_dump_file_write(wtap_dumper *wdh, const void *buf,

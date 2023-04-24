@@ -390,7 +390,7 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
 
         // initialize process info
         dissector_data->process = wmem_new0(pinfo->pool, struct traceshark_process);
-        dissector_data->process->pid.linux = pid;
+        dissector_data->process->pid._linux = pid;
     }
 
     // add event system and name to info column

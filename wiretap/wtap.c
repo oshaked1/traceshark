@@ -486,8 +486,9 @@ wtap_dump_params_init(wtap_dump_params *params, wtap *wth)
 	params->dsbs_growing = wth->dsbs;
 
     /* Assume that the input handle remains open until the dumper is closed.
-	 * Refer to the event formats from the input file. */
+	 * Refer to Traceshark data from the input file. */
 	params->trace_event_raw_formats = wth->trace_event_raw_formats;
+    params->machines = wth->machines;
 
 	params->dont_copy_idbs = FALSE;
 }
@@ -515,8 +516,9 @@ wtap_dump_params_init_no_idbs(wtap_dump_params *params, wtap *wth)
 	params->dsbs_growing = wth->dsbs;
 
     /* Assume that the input handle remains open until the dumper is closed.
-	 * Refer to the event formats from the input file. */
+	 * Refer to Traceshark data from the input file. */
 	params->trace_event_raw_formats = wth->trace_event_raw_formats;
+    params->machines = wth->machines;
     
 	params->dont_copy_idbs = TRUE;
 }
@@ -1484,6 +1486,9 @@ wtap_close(wtap *wth)
     
     if (wth->trace_event_raw_formats != NULL)
         g_hash_table_destroy(wth->trace_event_raw_formats);
+    
+    if (wth->machines != NULL)
+        g_hash_table_destroy(wth->machines);
 
     g_free(wth);
 }

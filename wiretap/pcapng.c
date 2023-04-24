@@ -3556,6 +3556,9 @@ pcapng_open(wtap *wth, int *err, gchar **err_info)
     // Traceshark - initialize map of machine ID and event type to raw event formats
     wth->trace_event_raw_formats = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, destroy_buffer_cb);
 
+    // Traceshark - initialize map of machine ID to machine info
+    wth->machines = g_hash_table_new_full(g_int_hash, g_int_equal, g_free, free_machine_info_data_cb);
+
     return WTAP_OPEN_MINE;
 }
 
@@ -3571,6 +3574,7 @@ pcapng_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err,
     wtap_block_t if_stats;
     wtapng_if_stats_mandatory_t *if_stats_mand_block, *if_stats_mand;
     wtapng_if_descr_mandatory_t *wtapng_if_descr_mand;
+    struct traceshark_wblock_custom_data *custom_data;
 
     wblock.frame_buffer  = buf;
     wblock.rec = rec;
@@ -3709,15 +3713,15 @@ pcapng_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err,
             case(BLOCK_TYPE_EVENT_FORMAT):
                 ws_debug("block type BLOCK_TYPE_EVENT_FORMAT");
 
-                struct traceshark_wblock_custom_data *custom_data = (struct traceshark_wblock_custom_data *)wblock.custom_data;
+                custom_data = (struct traceshark_wblock_custom_data *)wblock.custom_data;
                 guint32 machine_id = custom_data->data.event_format_data.machine_id;
                 guint16 event_type = custom_data->data.event_format_data.event_type;
                 Buffer *format_data = custom_data->data.event_format_data.format_data;
 
                 // populate raw event formats map with this block's formats
-                guint64 *key = g_new(guint64, 1);
-                *key = EVENT_FORMATS_KEY(machine_id, event_type);
-                g_hash_table_insert(wth->trace_event_raw_formats, key, format_data);
+                guint64 *event_formats_key = g_new(guint64, 1);
+                *event_formats_key = EVENT_FORMATS_KEY(machine_id, event_type);
+                g_hash_table_insert(wth->trace_event_raw_formats, event_formats_key, format_data);
 
                 // process the event formats
                 if (!traceshark_process_event_format_data(wth, machine_id, event_type, format_data, current_section->byte_swapped)) {
@@ -3727,6 +3731,20 @@ pcapng_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err,
                     *err_info = g_strdup("couldn't process event formats");
                     return FALSE;
                 }
+
+                g_free(custom_data);
+                break;
+            
+            /* Traceshark macnine info block */
+            case(BLOCK_TYPE_MACHINE_INFO):
+                ws_debug("block type BLOCK_TYPE_MACHINE_INFO");
+
+                custom_data = (struct traceshark_wblock_custom_data *)wblock.custom_data;
+                
+                // populate machine info map with this machine's info
+                guint32 *machine_info_key = g_new(guint32, 1);
+                *machine_info_key = custom_data->data.machine_info_data->machine_id;
+                g_hash_table_insert(wth->machines, machine_info_key, custom_data->data.machine_info_data);
 
                 g_free(custom_data);
                 break;
@@ -5955,10 +5973,24 @@ static gboolean pcapng_dump(wtap_dumper *wdh,
 
     /* Before writing the first record, write any optional Traceshark blocks */
     if (no_records_dumped) {
-        struct dumper_cb_data cb_data = { wdh, err, FALSE };
+        struct dumper_cb_data cb_data = {
+            .wdh = wdh,
+            .err = err,
+            .failed = FALSE
+        };
+
         if (wdh->trace_event_raw_formats) {
             g_hash_table_foreach(wdh->trace_event_raw_formats, traceshark_write_event_format_block, &cb_data);
+            if (cb_data.failed)
+                return FALSE;
         }
+
+        if (wdh->machines) {
+            g_hash_table_foreach(wdh->machines, traceshark_write_machine_info_block, &cb_data);
+            if (cb_data.failed)
+                return FALSE;
+        }
+
         no_records_dumped = FALSE;
     }
 

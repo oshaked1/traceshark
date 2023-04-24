@@ -166,6 +166,8 @@ const nstime_t *epan_get_frame_ts(const epan_t *session, guint32 frame_num);
 
 WS_DLL_PUBLIC const struct linux_trace_event_format *epan_get_linux_trace_event_format(const epan_t *session, guint32 machine_id, guint16 event_id);
 
+WS_DLL_PUBLIC const struct traceshark_machine_info_data *epan_get_machine_info(const epan_t *session, guint32 machine_id);
+
 WS_DLL_PUBLIC void epan_free(epan_t *session);
 
 WS_DLL_PUBLIC const gchar*

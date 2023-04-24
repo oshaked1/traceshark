@@ -2359,8 +2359,9 @@ wtap_dump_init_dumper(int file_type_subtype, wtap_compression_type compression_t
 	wdh->dsbs_initial = params->dsbs_initial;
 	wdh->dsbs_growing = params->dsbs_growing;
 
-    /* Set Traceshark event format data */
+    /* Set Traceshark data */
 	wdh->trace_event_raw_formats = params->trace_event_raw_formats;
+    wdh->machines = params->machines;
 
 	return wdh;
 }
