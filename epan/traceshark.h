@@ -12,7 +12,7 @@ union pid {
     guint32 raw;
 };
 
-struct traceshark_process {
+struct process_info {
     union pid pid;
     gchar *name;
 };
@@ -20,7 +20,7 @@ struct traceshark_process {
 struct traceshark_dissector_data {
     guint32 machine_id;
     guint16 event_type;
-    const struct traceshark_process *process;
+    const struct process_info *process;
 };
 
 proto_tree *proto_find_subtree(proto_tree *tree, gint hf);
@@ -38,7 +38,7 @@ proto_item *traceshark_proto_tree_add_uint64(proto_tree *tree, int hfindex, tvbu
 proto_item *traceshark_proto_tree_add_string(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, const char* value);
 
 enum process_event_type {
-    PROCESS_FORK,
+    PROCESS_FORK = 1,
     PROCESS_EXEC,
     PROCESS_EXIT
 };
@@ -51,7 +51,7 @@ enum process_event_type {
  * @param ts The timestamp in which the retrieved info is relevant.
  * @return The process information.
  */
-const struct traceshark_process *traceshark_get_process_info(guint32 machine_id, union pid pid, const nstime_t *ts);
+const struct process_info *traceshark_get_process_info(guint32 machine_id, union pid pid, const nstime_t *ts);
 
 struct fork_event {
     union pid parent_pid;
@@ -59,6 +59,6 @@ struct fork_event {
     const gchar *child_name;
 };
 
-const struct traceshark_process *traceshark_update_process_fork(guint32 machine_id, union pid pid, const nstime_t *ts, const struct fork_event *info);
+const struct process_info *traceshark_update_process_fork(guint32 machine_id, union pid pid, const nstime_t *ts, const struct fork_event *info);
 
 #endif /* __EPAN_TRACESHARK_H__ */

@@ -257,11 +257,12 @@ proto_item *traceshark_proto_tree_add_string(proto_tree *tree, int hfindex, tvbu
 }
 
 struct process_event {
-    struct traceshark_process *process; /* Process information as it was after the event occurred */
+    struct process_info *process; /* Process information as it was after the event occurred */
     enum process_event_type event_type;
     union {
+        const void *raw_ptr;
         const struct fork_event *fork;
-    } event;
+    } event_info;
 };
 
 #define PID_LIFECYCLE_KEY(machine_id, pid) (((guint64)(machine_id) << 32) + (pid.raw))
@@ -300,9 +301,9 @@ static gboolean pid_lifecycles_destroy_cb(wmem_allocator_t *allocator _U_, wmem_
     return TRUE;
 }
 
-static struct traceshark_process *generate_empty_process_info(wmem_allocator_t *allocator, union pid pid)
+static struct process_info *generate_empty_process_info(wmem_allocator_t *allocator, union pid pid)
 {
-    struct traceshark_process *process = wmem_new0(allocator, struct traceshark_process);
+    struct process_info *process = wmem_new0(allocator, struct process_info);
     process->pid = pid;
     return process;
 }
@@ -329,7 +330,7 @@ static const struct process_event *get_preceding_event(GTree *lifecycle, const n
     return NULL;
 }
 
-const struct traceshark_process *traceshark_get_process_info(guint32 machine_id, union pid pid, const nstime_t *ts)
+const struct process_info *traceshark_get_process_info(guint32 machine_id, union pid pid, const nstime_t *ts)
 {
     guint64 key;
     GTree *lifecycle;
@@ -372,9 +373,9 @@ static struct fork_event *duplicate_fork_event(const struct fork_event *src)
     return dst;
 }
 
-static struct traceshark_process *duplicate_process_info(const struct traceshark_process *src)
+static struct process_info *duplicate_process_info(const struct process_info *src)
 {
-    struct traceshark_process *dst = wmem_new0(wmem_file_scope(), struct traceshark_process);
+    struct process_info *dst = wmem_new0(wmem_file_scope(), struct process_info);
 
     dst->pid = src->pid;
     
@@ -386,137 +387,64 @@ static struct traceshark_process *duplicate_process_info(const struct traceshark
 
 static const char pid_lifecycle_update_err[] = "Cannot update PID lifecycle - event already exists for this exact timestamp";
 
-static const struct traceshark_process *update_process_fork_parent(GTree *lifecycle, const nstime_t *ts, const struct fork_event *info)
+typedef void (*copy_process_info)(const struct process_info *src, struct process_info *dst);
+
+struct process_info_propagate_params {
+    copy_process_info *copy_info;
+    gboolean forwards;
+    enum process_event_type *forwards_stop_at;
+    enum process_event_type *forwards_stop_after;
+    gboolean backwards;
+    enum process_event_type *backwards_stop_at;
+    enum process_event_type *backwards_stop_after;
+};
+
+struct pid_lifecycle_update_params {
+    guint32 machine_id;
+    union pid pid;
+    const nstime_t *ts;
+    enum process_event_type event_type;
+    const void *event_info;
+    void *(*dup_event_info)(const void *event_info);
+    gboolean copy_process_info_from_prev_event;
+    void (*update_process_info)(struct process_info *process_info, const void *event_info);
+    struct process_info_propagate_params propagate_params;
+};
+
+static gboolean event_type_in_list(enum process_event_type event_type, enum process_event_type *event_type_list)
 {
-    struct process_event *event;
-    const struct process_event *prev_event, *curr_event;
-    nstime_t *ts_copy;
-    GTreeNode *event_node, *curr_node;
-    gboolean stop;
+    enum process_event_type curr_event_type;
+    int i;
 
-    // make sure there's no event with the same ts
-    DISSECTOR_ASSERT_HINT(g_tree_lookup(lifecycle, ts) == NULL, pid_lifecycle_update_err);
-
-    // create event
-    event = wmem_new(wmem_file_scope(), struct process_event);
-    event->event_type = PROCESS_FORK;
-    event->event.fork = duplicate_fork_event(info);
-
-    // insert event into the lifecycle tree
-    ts_copy = wmem_new(wmem_file_scope(), nstime_t);
-    nstime_copy(ts_copy, ts);
-    event_node = g_tree_insert_node(lifecycle, ts_copy, event);
-
-    // get process info from last event
-    prev_event = get_preceding_event(lifecycle, ts);
-
-    // make sure previous event is not a process exit, which invalidates everything we know about the process
-    if (prev_event != NULL && prev_event->event_type != PROCESS_EXIT)
-        event->process = duplicate_process_info(prev_event->process);
-
-    // no previous event, or previous event was a process exit - generate new process info
-    else
-        event->process = generate_empty_process_info(wmem_file_scope(), info->parent_pid);
-
-    // Assume the parent's name is the same as the child's name.
-    // If they don't match, update the parent's name and propagate it.
-    if (info->child_name != NULL && (event->process->name == NULL || strcmp(event->process->name, info->child_name) != 0)) {
-        event->process->name = wmem_strdup(wmem_file_scope(), info->child_name);
-
-        // propagate name backwards (this makes sense because it's not a new piece of information from this event)
-        curr_node = event_node;
-        lifecycle_events_walk_backwards(curr_node, curr_event) {
-            // stop propagating if we hit the end of a previous process, or an event that changes the process name
-            stop = FALSE;
-            switch (curr_event->event_type) {
-                case PROCESS_EXIT:
-                case PROCESS_EXEC:
-                case PROCESS_FORK:
-                    stop = TRUE;
-                    break;
-            }
-            if (stop)
-                break;
-            
-            curr_event->process->name = wmem_strdup(wmem_file_scope(), event->process->name);
-        }
-
-        // propagate name forwards
-        curr_node = event_node;
-        lifecycle_events_walk_forwards(curr_node, curr_event) {
-            // stop propagating if we hit an event that changes the process name
-            stop = FALSE;
-            switch (curr_event->event_type) {
-                case PROCESS_EXEC:
-                case PROCESS_FORK:
-                    stop = TRUE;
-                    break;
-            }
-            if (stop)
-                break;
-            
-            curr_event->process->name = wmem_strdup(wmem_file_scope(), event->process->name);
-
-            // stop propagating if this event was the end of the process
-            if (curr_event->event_type == PROCESS_EXIT)
-                break;
-        }
+    for (i = 0, curr_event_type = event_type_list[0]; curr_event_type != 0; curr_event_type = event_type_list[++i]) {
+        if (curr_event_type == event_type)
+            return TRUE;
     }
 
-    return event->process;
+    return FALSE;
 }
 
-static void update_process_fork_child(GTree *lifecycle, const nstime_t *ts, const struct fork_event *info)
+static void copy_all_process_info(copy_process_info *copy_info_list, const struct process_info *src, struct process_info *dst)
 {
-    struct process_event *event;
-    nstime_t *ts_copy;
-    GTreeNode *event_node, *curr_node;
-    const struct process_event *curr_event;
-    gboolean stop;
+    copy_process_info curr_copy_info;
+    int i;
 
-    // make sure there's no event with the same ts
-    DISSECTOR_ASSERT_HINT(g_tree_lookup(lifecycle, ts) == NULL, pid_lifecycle_update_err);
-
-    // create event
-    event = wmem_new(wmem_file_scope(), struct process_event);
-    event->event_type = PROCESS_FORK;
-    event->event.fork = duplicate_fork_event(info);
-
-    // create new process info
-    event->process = generate_empty_process_info(wmem_file_scope(), event->event.fork->child_pid);
-    event->process->name = wmem_strdup(wmem_file_scope(), info->child_name);
-
-    // insert event into the lifecycle tree
-    ts_copy = wmem_new(wmem_file_scope(), nstime_t);
-    nstime_copy(ts_copy, ts);
-    event_node = g_tree_insert_node(lifecycle, ts_copy, event);
-
-    // propagate name forwards
-    curr_node = event_node;
-    lifecycle_events_walk_forwards(curr_node, curr_event) {
-        // stop propagating if we hit an event that changes the process name
-        stop = FALSE;
-        switch (curr_event->event_type) {
-            case PROCESS_EXEC:
-            case PROCESS_FORK:
-                stop = TRUE;
-                break;
-        }
-        
-        curr_event->process->name = wmem_strdup(wmem_file_scope(), event->process->name);
-
-        // stop propagating if this event was the end of the process
-        if (curr_event->event_type == PROCESS_EXIT)
-            break;
-    }
+    for (i = 0, curr_copy_info = copy_info_list[0]; curr_copy_info != NULL; curr_copy_info = copy_info_list[++i])
+        curr_copy_info(src, dst);
 }
 
-const struct traceshark_process *traceshark_update_process_fork(guint32 machine_id, union pid pid, const nstime_t *ts, const struct fork_event *info)
+static struct process_info *pid_lifecycle_update(struct pid_lifecycle_update_params *params)
 {
     guint64 key;
     guint64 *pkey;
     GTree *lifecycle;
-    const struct traceshark_process *process;
+    struct process_event *event;
+    nstime_t *ts_copy;
+    GTreeNode *event_node, *curr_node;
+    const struct process_event *prev_event, *curr_event;
+
+    // sanity check
+    ws_assert(params->dup_event_info != NULL);
 
     // make sure PID lifecycles map is initialized
     if (pid_lifecycles == NULL) {
@@ -524,11 +452,10 @@ const struct traceshark_process *traceshark_update_process_fork(guint32 machine_
         wmem_register_callback(wmem_file_scope(), pid_lifecycles_destroy_cb, NULL);
     }
 
-    // first update the parent PID's lifecycle
-    key = PID_LIFECYCLE_KEY(machine_id, pid);
+    key = PID_LIFECYCLE_KEY(params->machine_id, params->pid);
     lifecycle = wmem_map_lookup(pid_lifecycles, (gpointer)&key);
 
-    // parent lifecycle doens't exist - create it
+    // lifecycle doens't exist - create it
     if (lifecycle == NULL) {
         lifecycle = g_tree_new(nstime_cmp);
         pkey = wmem_new(wmem_file_scope(), guint64);
@@ -536,21 +463,120 @@ const struct traceshark_process *traceshark_update_process_fork(guint32 machine_
         wmem_map_insert(pid_lifecycles, pkey, lifecycle);
     }
 
-    process = update_process_fork_parent(lifecycle, ts, info);
+    // make sure there's no event with the same ts
+    DISSECTOR_ASSERT_HINT(g_tree_lookup(lifecycle, params->ts) == NULL, pid_lifecycle_update_err);
 
-    // now update the child PID's lifecycle
-    key = PID_LIFECYCLE_KEY(machine_id, info->child_pid);
-    lifecycle = wmem_map_lookup(pid_lifecycles, (gpointer)&key);
+    // create event
+    event = wmem_new0(wmem_file_scope(), struct process_event);
+    event->event_type = params->event_type;
+    event->event_info.raw_ptr = params->dup_event_info(params->event_info);
 
-    // child lifecycle doens't exist - create it
-    if (lifecycle == NULL) {
-        lifecycle = g_tree_new(nstime_cmp);
-        pkey = wmem_new(wmem_file_scope(), guint64);
-        *pkey = key;
-        wmem_map_insert(pid_lifecycles, pkey, lifecycle);
+    // insert event into the lifecycle tree
+    ts_copy = wmem_new(wmem_file_scope(), nstime_t);
+    nstime_copy(ts_copy, params->ts);
+    event_node = g_tree_insert_node(lifecycle, ts_copy, event);
+
+    // get process info from last event
+    if (params->copy_process_info_from_prev_event) {
+        prev_event = get_preceding_event(lifecycle, params->ts);
+
+        // make sure previous event is not a process exit, which invalidates everything we know about the process
+        if (prev_event != NULL && prev_event->event_type != PROCESS_EXIT)
+            event->process = duplicate_process_info(prev_event->process);
     }
 
-    update_process_fork_child(lifecycle, ts, info);
+    // not copying from previous event, or no previous event, or previous event was a process exit - generate new process info
+    if (event->process == NULL)
+        event->process = generate_empty_process_info(wmem_file_scope(), params->pid);
+    
+    // update process info with info from event
+    if (params->update_process_info != NULL)
+        params->update_process_info(event->process, event->event_info.raw_ptr);
+    
+    // propagate process info forwards
+    if (params->propagate_params.forwards) {
+        curr_node = event_node;
+        lifecycle_events_walk_forwards(curr_node, curr_event) {
+            // check if we should stop at this event
+            if (event_type_in_list(curr_event->event_type, params->propagate_params.forwards_stop_at))
+                break;
+            
+            // copy process info
+            copy_all_process_info(params->propagate_params.copy_info, event->process, curr_event->process);
 
-    return process;
+            // check if we should stop after this event (we always stop after process exit because it invalidates all info)
+            if (curr_event->event_type == PROCESS_EXIT || event_type_in_list(curr_event->event_type, params->propagate_params.forwards_stop_after))
+                break;
+        }
+    }
+
+    // propagate process info backwards
+    if (params->propagate_params.backwards) {
+        curr_node = event_node;
+        lifecycle_events_walk_backwards(curr_node, curr_event) {
+            // check if we should stop at this event (we always stop at process exit because it is the end of a previous process)
+            if (curr_event->event_type == PROCESS_EXIT || event_type_in_list(curr_event->event_type, params->propagate_params.backwards_stop_at))
+                break;
+            
+            // copy process info
+            copy_all_process_info(params->propagate_params.copy_info, event->process, curr_event->process);
+
+            // check if we should stop after this event
+            if (event_type_in_list(curr_event->event_type, params->propagate_params.backwards_stop_after))
+                break;
+        }
+    }
+
+    return event->process;
+}
+
+static void copy_process_name(const struct process_info *src, struct process_info *dst)
+{
+    if (src->name)
+        dst->name = wmem_strdup(wmem_file_scope(), src->name);
+}
+
+static void update_process_fork_event(struct process_info *process_info, const struct fork_event *fork_event)
+{
+    // assume parent's name is the same as the child's name
+    if (fork_event->child_name != NULL)
+        process_info->name = wmem_strdup(wmem_file_scope(), fork_event->child_name);
+}
+
+const struct process_info *traceshark_update_process_fork(guint32 machine_id, union pid pid, const nstime_t *ts, const struct fork_event *info)
+{
+    struct process_info *process_info;
+
+    copy_process_info copy_info[] = { copy_process_name, NULL };
+    enum process_event_type stop_at[] = { PROCESS_EXEC, PROCESS_FORK, 0 };
+    struct pid_lifecycle_update_params update_params = {
+        .machine_id = machine_id,
+        .pid = pid,
+        .ts = ts,
+        .event_type = PROCESS_FORK,
+        .event_info = info,
+        .dup_event_info = duplicate_fork_event,
+        .copy_process_info_from_prev_event = TRUE,
+        .update_process_info = update_process_fork_event,
+        .propagate_params = {
+            .copy_info = copy_info,
+            .forwards = TRUE,
+            .forwards_stop_at = stop_at,
+            .forwards_stop_after = NULL,
+            .backwards = TRUE,
+            .backwards_stop_at = stop_at,
+            .backwards_stop_after = NULL
+        }
+    };
+
+    // update parent PID lifecylce
+    process_info = pid_lifecycle_update(&update_params);
+
+    // update child PID lifecycle
+    update_params.pid = info->child_pid;
+    update_params.copy_process_info_from_prev_event = FALSE;
+    update_params.propagate_params.backwards = FALSE;
+    pid_lifecycle_update(&update_params);
+
+    return process_info;
 }
