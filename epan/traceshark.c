@@ -387,10 +387,12 @@ static struct process_info *duplicate_process_info(const struct process_info *sr
 
 static const char pid_lifecycle_update_err[] = "Cannot update PID lifecycle - event already exists for this exact timestamp";
 
-typedef void (*copy_process_info)(const struct process_info *src, struct process_info *dst);
+typedef void (*copy_process_info_t)(const struct process_info *src, struct process_info *dst);
+typedef void *(*dup_event_info_t)(const void *event_info);
+typedef void (*update_process_info_t)(struct process_info *process_info, const void *event_info);
 
 struct process_info_propagate_params {
-    copy_process_info *copy_info;
+    copy_process_info_t *copy_info;
     gboolean forwards;
     enum process_event_type *forwards_stop_at;
     enum process_event_type *forwards_stop_after;
@@ -405,9 +407,9 @@ struct pid_lifecycle_update_params {
     const nstime_t *ts;
     enum process_event_type event_type;
     const void *event_info;
-    void *(*dup_event_info)(const void *event_info);
+    dup_event_info_t dup_event_info;
     gboolean copy_process_info_from_prev_event;
-    void (*update_process_info)(struct process_info *process_info, const void *event_info);
+    update_process_info_t update_process_info;
     struct process_info_propagate_params propagate_params;
 };
 
@@ -424,9 +426,9 @@ static gboolean event_type_in_list(enum process_event_type event_type, enum proc
     return FALSE;
 }
 
-static void copy_all_process_info(copy_process_info *copy_info_list, const struct process_info *src, struct process_info *dst)
+static void copy_all_process_info(copy_process_info_t *copy_info_list, const struct process_info *src, struct process_info *dst)
 {
-    copy_process_info curr_copy_info;
+    copy_process_info_t curr_copy_info;
     int i;
 
     for (i = 0, curr_copy_info = copy_info_list[0]; curr_copy_info != NULL; curr_copy_info = copy_info_list[++i])
@@ -457,7 +459,7 @@ static struct process_info *pid_lifecycle_update(struct pid_lifecycle_update_par
 
     // lifecycle doens't exist - create it
     if (lifecycle == NULL) {
-        lifecycle = g_tree_new(nstime_cmp);
+        lifecycle = g_tree_new((GCompareFunc)nstime_cmp);
         pkey = wmem_new(wmem_file_scope(), guint64);
         *pkey = key;
         wmem_map_insert(pid_lifecycles, pkey, lifecycle);
@@ -547,7 +549,7 @@ const struct process_info *traceshark_update_process_fork(guint32 machine_id, un
 {
     struct process_info *process_info;
 
-    copy_process_info copy_info[] = { copy_process_name, NULL };
+    copy_process_info_t copy_info[] = { copy_process_name, NULL };
     enum process_event_type stop_at[] = { PROCESS_EXEC, PROCESS_FORK, 0 };
     struct pid_lifecycle_update_params update_params = {
         .machine_id = machine_id,
@@ -555,9 +557,9 @@ const struct process_info *traceshark_update_process_fork(guint32 machine_id, un
         .ts = ts,
         .event_type = PROCESS_FORK,
         .event_info = info,
-        .dup_event_info = duplicate_fork_event,
+        .dup_event_info = (dup_event_info_t)duplicate_fork_event,
         .copy_process_info_from_prev_event = TRUE,
-        .update_process_info = update_process_fork_event,
+        .update_process_info = (update_process_info_t)update_process_fork_event,
         .propagate_params = {
             .copy_info = copy_info,
             .forwards = TRUE,
