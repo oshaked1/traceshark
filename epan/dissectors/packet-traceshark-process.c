@@ -5,8 +5,6 @@
 static int proto_process = -1;
 
 static int hf_event = -1;
-static int hf_pid_linux = -1;
-static int hf_name = -1;
 static int hf_error_code = -1;
 static int hf_exec_file = -1;
 static int hf_old_pid_linux = -1;
@@ -42,7 +40,6 @@ static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_
     // add PID according to its type
     switch (dissector_data->event_type) {
         case EVENT_TYPE_LINUX_TRACE_EVENT:
-            traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, dissector_data->process->pid._linux);
             col_append_fstr(pinfo->cinfo, COL_INFO, ": PID %d", dissector_data->process->pid._linux);
             break;
         default:
@@ -50,10 +47,8 @@ static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_
     }
 
     // add process name
-    if (dissector_data->process->name != NULL) {
-        traceshark_proto_tree_add_string(process_tree, hf_name, tvb, 0, 0, dissector_data->process->name);
+    if (dissector_data->process->name != NULL)
         col_append_fstr(pinfo->cinfo, COL_INFO, " (%s)", dissector_data->process->name);
-    }
 
     return process_tree;
 }
@@ -145,48 +140,38 @@ void proto_register_process(void)
 
     static hf_register_info hf[] = {
         { &hf_event,
-          { "Event", "process.event",
+          { "Event", "process_event.event",
             FT_UINT16, BASE_DEC, VALS(process_events), 0,
             "Process event type", HFILL }
         },
-        { &hf_pid_linux,
-          { "PID", "process.pid",
-            FT_INT32, BASE_DEC, NULL, 0,
-            "Linux process ID (identifies a thread)", HFILL }
-        },
-        { &hf_name,
-          { "Name", "process.name",
-            FT_STRINGZ, BASE_NONE, NULL, 0,
-            "Process name", HFILL }
-        },
         { &hf_error_code,
-          { "Exit Code", "process.error_code",
+          { "Exit Code", "process_event.error_code",
             FT_INT32, BASE_DEC, NULL, 0,
             "Process exit error code", HFILL }
         },
         { &hf_exec_file,
-          { "Exec File", "process.exec_file",
+          { "Exec File", "process_event.exec_file",
             FT_STRINGZ, BASE_NONE, NULL, 0,
             "File being executed", HFILL }
         },
         { &hf_old_pid_linux,
-          { "Old PID", "process.old_pid",
+          { "Old PID", "process_event.old_pid",
             FT_INT32, BASE_DEC, NULL, 0,
             "Previous PID (when a process that isn't the thread group leader executes a file, all other threads are terminated and the executing thread inherits the leader's PID)", HFILL }
         },
         { &hf_child_pid_linux,
-          { "Child PID", "process.child_pid",
+          { "Child PID", "process_event.child_pid",
             FT_INT32, BASE_DEC, NULL, 0,
             "New child process ID", HFILL }
         },
         { &hf_child_name,
-          { "Child Name", "process.child_name",
+          { "Child Name", "process_event.child_name",
             FT_STRINGZ, BASE_NONE, NULL, 0,
             "New child process name", HFILL }
         }
     };
 
-    proto_process = proto_register_protocol("Process", "PROCESS", "process");
+    proto_process = proto_register_protocol("Process Event", "PROCESS", "process_event");
     proto_register_field_array(proto_process, hf, array_length(hf));
     proto_register_subtree_array(ett, array_length(ett));
 

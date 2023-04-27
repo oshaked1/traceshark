@@ -17,13 +17,6 @@ static gint ett_linux_trace_event = -1;
 static gint ett_common_fields = -1;
 static gint ett_event_specific_fields = -1;
 
-/**
- * Additional frame fields
-*/
-static int proto_frame = -1;
-static int hf_pid_linux = -1;
-static int hf_pid_and_name = -1;
-
 static const value_string endianness_vals[] = {
     { 0, "Little Endian" },
     { 1, "Big Endian" },
@@ -316,7 +309,7 @@ static void dissect_event_data(tvbuff_t *tvb, packet_info *pinfo, proto_tree *co
 static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
     proto_item *linux_trace_event_item, *item;
-    proto_tree *linux_trace_event_tree, *common_fields_tree, *event_specific_fields_tree, *frame_tree;
+    proto_tree *linux_trace_event_tree, *common_fields_tree, *event_specific_fields_tree;
     struct event_options *metadata;
     struct linux_trace_event_options *linux_trace_event_metadata;
     guint encoding;
@@ -381,9 +374,7 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     DISSECTOR_ASSERT_HINT(pid_val != NULL, "Could not find PID field");
     pid._linux = fvalue_get_sinteger(pid_val);
 
-    // add PID to frame tree and info column
-    frame_tree = proto_find_subtree(tree, proto_frame);
-    traceshark_proto_tree_add_int(frame_tree, hf_pid_linux, tvb, 0, 0, pid._linux);
+    // add PID to info column
     col_append_fstr(pinfo->cinfo, COL_INFO, ", PID = %d", pid._linux);
 
     // add event system and name to info column
@@ -394,16 +385,6 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
 
     // call dissector for this event
     dissector_try_string(event_system_and_name_dissector_table, system_and_name, tvb, pinfo, tree, dissector_data);
-
-    // Add PID and name field to frame tree.
-    // This must happen after calling the next dissector,
-    // because if it's the process dissector then it may change the name.
-    if (dissector_data->process->name != NULL)
-        item = traceshark_proto_tree_add_string(frame_tree, hf_pid_and_name, tvb, 0, 0, wmem_strdup_printf(pinfo->pool, "%d (%s)", pid._linux, dissector_data->process->name));
-    else
-        item = traceshark_proto_tree_add_string(frame_tree, hf_pid_and_name, tvb, 0, 0, wmem_strdup_printf(pinfo->pool, "%d", pid._linux));
-    
-    proto_item_set_hidden(item);
 
     return tvb_captured_length(tvb);
 }
@@ -453,22 +434,6 @@ void proto_register_linux_trace_event(void)
         "LINUX_TRACE_EVENT", "linux_trace_event");
     proto_register_field_array(proto_linux_trace_event, hf, array_length(hf));
     proto_register_subtree_array(ett, array_length(ett));
-
-    static hf_register_info frame_hf[] = {
-        { &hf_pid_linux,
-          { "PID", "frame.pid",
-            FT_INT32, BASE_DEC, NULL, 0,
-            "Linux PID (identifies a thread)", HFILL }
-        },
-        { &hf_pid_and_name,
-          { "PID and Name", "frame.pid_name",
-            FT_STRINGZ, BASE_NONE, NULL, 0,
-            "Process ID and name", HFILL }
-        }
-    };
-
-    proto_frame = proto_get_id_by_filter_name("frame");
-    proto_register_field_array(proto_frame, frame_hf, array_length(frame_hf));
 
     // create dynamic field array map and register a callback to free the arrays when the map is destroyed
     dynamic_hf_map = wmem_map_new_autoreset(wmem_epan_scope(), wmem_file_scope(), g_int64_hash, g_int64_equal);

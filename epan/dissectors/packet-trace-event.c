@@ -3,11 +3,13 @@
 #include <wiretap/traceshark.h>
 
 static int proto_trace_event = -1;
+static int proto_frame = -1;
 
 static dissector_table_t event_type_dissector_table;
 
-static int proto_frame = -1;
-
+/**
+ * Additional frame fields
+*/
 static int hf_event_type = -1;
 static int hf_machine_id = -1;
 static int hf_hostname = -1;
@@ -17,7 +19,15 @@ static int hf_os_version = -1;
 static int hf_arch = -1;
 static int hf_num_cpus = -1;
 
+/**
+ * Process info fields
+*/
+static int hf_pid_linux = -1;
+static int hf_process_name = -1;
+static int hf_pid_and_name = -1;
+
 static gint ett_machine_info = -1;
+static gint ett_process_info = -1;
 
 const value_string event_types[] = {
     { EVENT_TYPE_UNKNOWN, "Unknown" },
@@ -39,6 +49,38 @@ const value_string architectures[] = {
     { 0, "NULL" }
 };
 
+static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, struct traceshark_dissector_data *dissector_data)
+{
+    proto_item *item;
+    proto_tree *process_tree;
+    gchar *pid_and_name;
+    
+    item = proto_tree_add_item(tree, proto_trace_event, tvb, 0, 0, ENC_NA);
+    proto_item_set_text(item, "Process Info");
+    process_tree = proto_item_add_subtree(item, ett_process_info);
+
+    // add PID
+    switch (dissector_data->event_type) {
+        case EVENT_TYPE_LINUX_TRACE_EVENT:
+            traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, dissector_data->process->pid._linux);
+            pid_and_name = wmem_strdup_printf(pinfo->pool, "%d", dissector_data->process->pid._linux);
+            break;
+        
+        default:
+            DISSECTOR_ASSERT_NOT_REACHED();
+    }
+    
+    // add name
+    if (dissector_data->process->name != NULL) {
+        traceshark_proto_tree_add_string(process_tree, hf_process_name, tvb, 0, 0, dissector_data->process->name);
+        pid_and_name = wmem_strdup_printf(pinfo->pool, "%s (%s)", pid_and_name, dissector_data->process->name);
+    }
+    
+    // add PID and name
+    item = traceshark_proto_tree_add_string(process_tree, hf_pid_and_name, tvb, 0, 0, pid_and_name);
+    proto_item_set_hidden(item);
+}
+
 static int dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
     proto_item *machine_info_item, *item;
@@ -47,6 +89,7 @@ static int dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
     struct traceshark_dissector_data *dissector_data;
     const struct traceshark_machine_info_data *machine_info;
     dissector_handle_t event_type_dissector;
+    int ret;
     
     DISSECTOR_ASSERT_HINT(pinfo->rec->rec_type == REC_TYPE_FT_SPECIFIC_EVENT, "Exptected REC_TYPE_FT_SPECIFIC_EVENT record");
     metadata = (struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf);
@@ -98,13 +141,38 @@ static int dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
     dissector_data->machine_id = metadata->machine_id;
     dissector_data->event_type = metadata->event_type;
     
-    return call_dissector_only(event_type_dissector, tvb, pinfo, tree, dissector_data);
+    ret = call_dissector_only(event_type_dissector, tvb, pinfo, tree, dissector_data);
+
+    // if higher level dissector added process info, dissect it
+    if (dissector_data->process)
+        dissect_process_info(tvb, pinfo, tree, dissector_data);
+    
+    return ret;
 }
 
 void proto_register_trace_event(void)
 {
     static gint *ett[] = {
-        &ett_machine_info
+        &ett_machine_info,
+        &ett_process_info
+    };
+
+    static hf_register_info hf[] = {
+        { &hf_pid_linux,
+          { "PID", "process.pid",
+            FT_INT32, BASE_DEC, NULL, 0,
+            "Linux process ID (identifies a thread)", HFILL }
+        },
+        { &hf_process_name,
+          { "Name", "process.name",
+            FT_STRINGZ, BASE_NONE, NULL, 0,
+            "Process name", HFILL }
+        },
+        { &hf_pid_and_name,
+          { "PID and Name", "process.pid_name",
+            FT_STRINGZ, BASE_NONE, NULL, 0,
+            "Process ID and name", HFILL }
+        }
     };
     
     static hf_register_info frame_hf[] = {
@@ -150,8 +218,12 @@ void proto_register_trace_event(void)
         }
     };
 
+    proto_trace_event = proto_register_protocol("Trace Event", "TRACE_EVENT", "event");
+    proto_register_field_array(proto_trace_event, hf, array_length(hf));
+
     proto_frame = proto_get_id_by_filter_name("frame");
     proto_register_field_array(proto_frame, frame_hf, array_length(frame_hf));
+
     proto_register_subtree_array(ett, array_length(ett));
 
     event_type_dissector_table = register_dissector_table("frame.event_type", "Trace Event Type", proto_trace_event, FT_UINT16, BASE_DEC);
