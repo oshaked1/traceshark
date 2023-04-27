@@ -334,6 +334,8 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     linux_trace_event_item = proto_tree_add_item(tree, proto_linux_trace_event, tvb, 0, -1, ENC_NA);
     linux_trace_event_tree = proto_item_add_subtree(linux_trace_event_item, ett_linux_trace_event);
 
+    proto_item_append_text(linux_trace_event_item, ": CPU = %u", linux_trace_event_metadata->cpu);
+
     // populate event metadata fields
     item = traceshark_proto_tree_add_uint(linux_trace_event_tree, hf_big_endian, tvb, 0, 0, (guint8)linux_trace_event_metadata->big_endian);
     proto_item_set_generated(item);
@@ -374,11 +376,9 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     DISSECTOR_ASSERT_HINT(pid_val != NULL, "Could not find PID field");
     pid._linux = fvalue_get_sinteger(pid_val);
 
-    // add PID to info column
-    col_append_fstr(pinfo->cinfo, COL_INFO, ", PID = %d", pid._linux);
-
-    // add event system and name to info column
-    col_append_fstr(pinfo->cinfo, COL_INFO, ", %s", system_and_name);
+    // add PID and event system and name to info column and Linux trace event item
+    col_append_fstr(pinfo->cinfo, COL_INFO, ", PID = %d, %s", pid._linux, system_and_name);
+    proto_item_append_text(linux_trace_event_item, ", PID = %d, %s", pid._linux, system_and_name);
 
     // get process info
     dissector_data->process = traceshark_get_process_info(dissector_data->machine_id, pid, &pinfo->abs_ts);

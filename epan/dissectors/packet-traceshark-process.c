@@ -20,22 +20,21 @@ const value_string process_events[] = {
     { 0, "NULL" }
 };
 
-static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, struct traceshark_dissector_data *dissector_data, enum process_event_type event)
+static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_tree **process_event_item, proto_item **process_event_tree, struct traceshark_dissector_data *dissector_data, enum process_event_type event)
 {
-    proto_item *process_item;
-    proto_tree *process_tree;
     const gchar *event_str;
 
-    process_item = proto_tree_add_item(tree, proto_process, tvb, 0, 0, ENC_NA);
-    process_tree = proto_item_add_subtree(process_item, ett_process);
+    *process_event_item = proto_tree_add_item(tree, proto_process, tvb, 0, 0, ENC_NA);
+    *process_event_tree = proto_item_add_subtree(*process_event_item, ett_process);
 
     col_set_str(pinfo->cinfo, COL_PROTOCOL, "PROCESS");
 
     event_str = try_val_to_str(event, process_events);
     DISSECTOR_ASSERT(event_str != NULL);
     col_add_fstr(pinfo->cinfo, COL_INFO, "Process %s", event_str);
+    proto_item_append_text(*process_event_item, ": %s", event_str);
 
-    traceshark_proto_tree_add_uint(process_tree, hf_event, tvb, 0, 0, event);
+    traceshark_proto_tree_add_uint(*process_event_tree, hf_event, tvb, 0, 0, event);
 
     // add PID according to its type
     switch (dissector_data->event_type) {
@@ -49,14 +48,13 @@ static proto_tree *dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_
     // add process name
     if (dissector_data->process->name != NULL)
         col_append_fstr(pinfo->cinfo, COL_INFO, " (%s)", dissector_data->process->name);
-
-    return process_tree;
 }
 
 static int dissect_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
     struct traceshark_dissector_data *dissector_data = (struct traceshark_dissector_data *)data;
-    proto_tree *process_tree;
+    proto_item *process_event_item = NULL;
+    proto_tree *process_event_tree = NULL;
     fvalue_t *fv;
     union pid child_pid;
     const gchar *child_name;
@@ -78,10 +76,12 @@ static int dissect_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
         dissector_data->process = traceshark_update_process_fork(dissector_data->machine_id, dissector_data->process->pid, &pinfo->abs_ts, &fork_info);
     }
 
-    process_tree = dissect_common_info(tvb, pinfo, tree, dissector_data, PROCESS_FORK);
-    traceshark_proto_tree_add_int(process_tree, hf_child_pid_linux, tvb, 0, 0, child_pid._linux);
-    traceshark_proto_tree_add_string(process_tree, hf_child_name, tvb, 0, 0, child_name);
+    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_FORK);
+    traceshark_proto_tree_add_int(process_event_tree, hf_child_pid_linux, tvb, 0, 0, child_pid._linux);
+    traceshark_proto_tree_add_string(process_event_tree, hf_child_name, tvb, 0, 0, child_name);
     col_append_fstr(pinfo->cinfo, COL_INFO, " has spawned a new child with PID %d (%s)", child_pid._linux, child_name);
+
+    proto_item_append_text(process_event_item, " (%d -> %d)", dissector_data->process->pid._linux, child_pid._linux);
 
     return 0;
 }
@@ -89,24 +89,26 @@ static int dissect_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
 static int dissect_process_exec(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
     struct traceshark_dissector_data *dissector_data = (struct traceshark_dissector_data *)data;
-    proto_tree *process_tree;
+    proto_item *process_event_item = NULL;
+    proto_tree *process_event_tree = NULL;
     fvalue_t *fv;
     const gchar *exec_file;
     union pid old_pid;
 
-    process_tree = dissect_common_info(tvb, pinfo, tree, dissector_data, PROCESS_EXEC);
+    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXEC);
 
     // get exec file
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.sched.sched_process_exec.filename");
     exec_file = wmem_strbuf_get_str(fvalue_get_strbuf(fv));
-    traceshark_proto_tree_add_string(process_tree, hf_exec_file, tvb, 0, 0, exec_file);
+    traceshark_proto_tree_add_string(process_event_tree, hf_exec_file, tvb, 0, 0, exec_file);
 
     col_append_fstr(pinfo->cinfo, COL_INFO, " is executing %s", exec_file);
+    proto_item_append_text(process_event_item, " (%s)", exec_file);
 
     // get old PID
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.sched.sched_process_exec.old_pid");
     old_pid._linux = fvalue_get_sinteger(fv);
-    traceshark_proto_tree_add_int(process_tree, hf_old_pid_linux, tvb, 0, 0, old_pid._linux);
+    traceshark_proto_tree_add_int(process_event_tree, hf_old_pid_linux, tvb, 0, 0, old_pid._linux);
 
     if (old_pid._linux != dissector_data->process->pid._linux)
         col_append_fstr(pinfo->cinfo, COL_INFO, " (exec was called from thread with PID %d, which inherited PID %d of the main thread)", old_pid._linux, dissector_data->process->pid._linux);
@@ -117,16 +119,17 @@ static int dissect_process_exec(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
 static int dissect_process_exit(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
 {
     struct traceshark_dissector_data *dissector_data = (struct traceshark_dissector_data *)data;
-    proto_tree *process_tree;
+    proto_item *process_event_item = NULL;
+    proto_tree *process_event_tree = NULL;
     fvalue_t *fv;
     gint32 error_code;
 
-    process_tree = dissect_common_info(tvb, pinfo, tree, dissector_data, PROCESS_EXIT);
+    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT);
 
     // get exit code
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.syscalls.sys_enter_exit_group.error_code");
     error_code = (gint32)fvalue_get_sinteger64(fv);
-    traceshark_proto_tree_add_int(process_tree, hf_error_code, tvb, 0, 0, error_code);
+    traceshark_proto_tree_add_int(process_event_tree, hf_error_code, tvb, 0, 0, error_code);
     col_append_fstr(pinfo->cinfo, COL_INFO, " has called exit_group() with error code %d. All active threads will now be terminated.", error_code);
 
     return 0;
