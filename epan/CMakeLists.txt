@@ -247,7 +247,8 @@ set(LIBWIRESHARK_NONGENERATED_FILES
 	timestats.c
 	tfs.c
 	to_str.c
-    traceshark.c
+    traceshark_field_subscription.c
+    traceshark_pid_lifecycle.c
 	tvbparse.c
 	tvbuff.c
 	tvbuff_base64.c

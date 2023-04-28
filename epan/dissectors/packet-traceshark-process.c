@@ -58,7 +58,6 @@ static int dissect_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     fvalue_t *fv;
     union pid child_pid;
     const gchar *child_name;
-    struct fork_event fork_info;
 
     // get child PID
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.task.task_newtask.pid");
@@ -69,12 +68,8 @@ static int dissect_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     child_name = wmem_strbuf_get_str(fvalue_get_strbuf(fv));
 
     // update PID lifecycle with this event
-    if (!pinfo->fd->visited) {
-        fork_info.parent_pid = dissector_data->process->pid;
-        fork_info.child_pid = child_pid;
-        fork_info.child_name = child_name;
-        dissector_data->process = traceshark_update_process_fork(dissector_data->machine_id, dissector_data->process->pid, &pinfo->abs_ts, &fork_info);
-    }
+    if (!pinfo->fd->visited)
+        dissector_data->process = traceshark_update_process_fork(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->process->pid, child_pid, child_name);
 
     dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_FORK);
     traceshark_proto_tree_add_int(process_event_tree, hf_child_pid_linux, tvb, 0, 0, child_pid._linux);

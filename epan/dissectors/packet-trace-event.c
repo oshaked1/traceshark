@@ -8,6 +8,14 @@ static int proto_frame = -1;
 static dissector_table_t event_type_dissector_table;
 
 /**
+ * Process info fields
+*/
+static int hf_pid_linux = -1;
+static int hf_process_name = -1;
+static int hf_pid_and_name = -1;
+static int hf_start_framenum = -1;
+
+/**
  * Additional frame fields
 */
 static int hf_event_type = -1;
@@ -18,13 +26,6 @@ static int hf_os_type = -1;
 static int hf_os_version = -1;
 static int hf_arch = -1;
 static int hf_num_cpus = -1;
-
-/**
- * Process info fields
-*/
-static int hf_pid_linux = -1;
-static int hf_process_name = -1;
-static int hf_pid_and_name = -1;
 
 static gint ett_machine_info = -1;
 static gint ett_process_info = -1;
@@ -54,6 +55,7 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     proto_item *item;
     proto_tree *process_tree;
     gchar *pid_and_name;
+    const struct process_info *process = dissector_data->process;
     
     item = proto_tree_add_item(tree, proto_trace_event, tvb, 0, 0, ENC_NA);
     proto_item_set_text(item, "Process Info");
@@ -62,8 +64,8 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     // add PID
     switch (dissector_data->event_type) {
         case EVENT_TYPE_LINUX_TRACE_EVENT:
-            traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, dissector_data->process->pid._linux);
-            pid_and_name = wmem_strdup_printf(pinfo->pool, "%d", dissector_data->process->pid._linux);
+            traceshark_proto_tree_add_int(process_tree, hf_pid_linux, tvb, 0, 0, process->pid._linux);
+            pid_and_name = wmem_strdup_printf(pinfo->pool, "%d", process->pid._linux);
             break;
         
         default:
@@ -71,14 +73,20 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     }
     
     // add name
-    if (dissector_data->process->name != NULL) {
-        traceshark_proto_tree_add_string(process_tree, hf_process_name, tvb, 0, 0, dissector_data->process->name);
-        pid_and_name = wmem_strdup_printf(pinfo->pool, "%s (%s)", pid_and_name, dissector_data->process->name);
+    if (process->name != NULL) {
+        traceshark_proto_tree_add_string(process_tree, hf_process_name, tvb, 0, 0, process->name);
+        pid_and_name = wmem_strdup_printf(pinfo->pool, "%s (%s)", pid_and_name, process->name);
     }
     
     // add PID and name
     item = traceshark_proto_tree_add_string(process_tree, hf_pid_and_name, tvb, 0, 0, pid_and_name);
     proto_item_set_hidden(item);
+
+    // add start frame
+    if (process->start_framenum != 0) {
+        item = traceshark_proto_tree_add_uint(process_tree, hf_start_framenum, tvb, 0, 0, process->start_framenum);
+        proto_item_set_generated(item);
+    }
 }
 
 static int dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
@@ -172,6 +180,11 @@ void proto_register_trace_event(void)
           { "PID and Name", "process.pid_name",
             FT_STRINGZ, BASE_NONE, NULL, 0,
             "Process ID and name", HFILL }
+        },
+        { &hf_start_framenum,
+          { "Started in", "process.start",
+            FT_FRAMENUM, BASE_NONE, NULL, 0,
+            "Process start frame", HFILL }
         }
     };
     
