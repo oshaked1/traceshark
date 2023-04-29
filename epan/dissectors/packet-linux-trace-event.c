@@ -372,8 +372,7 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     dissect_event_data(tvb, pinfo, common_fields_tree, event_specific_fields_tree, format, dynamic_hf, encoding);
 
     // get PID field
-    pid_val = traceshark_subscribed_field_get_single_value_or_null("linux_trace_event.data.common_pid");
-    DISSECTOR_ASSERT_HINT(pid_val != NULL, "Could not find PID field");
+    pid_val = traceshark_subscribed_field_get_single_value("linux_trace_event.data.common_pid");
     pid._linux = fvalue_get_sinteger(pid_val);
 
     // add PID and event system and name to info column and Linux trace event item

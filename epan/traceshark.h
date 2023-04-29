@@ -51,10 +51,15 @@ struct traceshark_dissector_data {
     const struct process_info *process;
 };
 
+/**
+ * Processes and threads in Linux are indistinguishable in many aspects,
+ * so we treat events of both as process events. 
+ */
 enum process_event_type {
     PROCESS_NO_EVENT,
     PROCESS_START,
     PROCESS_FORK,
+    PROCESS_FORK_THREAD,
     PROCESS_EXEC,
     PROCESS_EXIT
 };
