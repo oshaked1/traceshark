@@ -117,15 +117,20 @@ static int dissect_process_exit(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     proto_item *process_event_item = NULL;
     proto_tree *process_event_tree = NULL;
     fvalue_t *fv;
-    gint32 error_code;
-
-    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT);
+    union exit_code error_code;
 
     // get exit code
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.syscalls.sys_enter_exit_group.error_code");
-    error_code = (gint32)fvalue_get_sinteger64(fv);
-    traceshark_proto_tree_add_int(process_event_tree, hf_error_code, tvb, 0, 0, error_code);
-    col_append_fstr(pinfo->cinfo, COL_INFO, " has called exit_group() with error code %d. All active threads will now be terminated.", error_code);
+    error_code._linux = (gint32)fvalue_get_sinteger64(fv);
+
+    // update PID lifecycle with this event
+    if (!pinfo->fd->visited)
+        dissector_data->process = traceshark_update_process_exit(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->process->pid, TRUE, error_code);
+
+    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT);
+
+    traceshark_proto_tree_add_int(process_event_tree, hf_error_code, tvb, 0, 0, error_code._linux);
+    col_append_fstr(pinfo->cinfo, COL_INFO, " has called exit_group() with error code %d. All active threads will now be terminated.", error_code._linux);
 
     return 0;
 }

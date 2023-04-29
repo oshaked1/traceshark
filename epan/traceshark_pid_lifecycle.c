@@ -15,6 +15,11 @@ struct process_start_info {
     union pid parent_pid;
 };
 
+struct process_exit_info {
+    gboolean has_exit_code; // to distinguish between a zero value and no value
+    union exit_code exit_code;
+};
+
 struct process_event {
     union pid pid;
     guint32 framenum;
@@ -23,6 +28,7 @@ struct process_event {
         const void *raw_ptr;
         const struct process_fork_info *fork;
         const struct process_start_info *start;
+        const struct process_exit_info *exit;
     } event_info;
     struct process_info *process; /* Process information as it was after the event occurred */
 };
@@ -107,12 +113,12 @@ static void reset_process_info(struct process_info *process)
 
 static void copy_process_info(const struct process_info *src, struct process_info *dst)
 {
-    dst->pid = src->pid;
+    // copy all content
+    memcpy(dst, src, sizeof(struct process_info));
 
+    // copy all dynamicically allocated info and update the pointers
     if (src->name != NULL)
         dst->name = wmem_strdup(wmem_file_scope(), src->name);
-    
-    dst->start_framenum = src->start_framenum;
 }
 
 static void update_process_info(struct process_event *event)
@@ -123,6 +129,14 @@ static void update_process_info(struct process_event *event)
         case PROCESS_NO_EVENT:
             break;
         
+        case PROCESS_START:
+            event->process->start_framenum = event->framenum;
+
+            if (event->event_info.start->name != NULL)
+                event->process->name = wmem_strdup(wmem_file_scope(), event->event_info.start->name);
+            
+            break;
+        
         case PROCESS_FORK:
             // assume parent's name is the same as the child's name
             if (event->event_info.fork->child_name != NULL)
@@ -130,12 +144,14 @@ static void update_process_info(struct process_event *event)
             
             break;
         
-        case PROCESS_START:
-            event->process->start_framenum = event->framenum;
-
-            if (event->event_info.start->name != NULL)
-                event->process->name = wmem_strdup(wmem_file_scope(), event->event_info.start->name);
+        case PROCESS_EXIT:
+            event->process->exit_framenum = event->framenum;
             
+            if (event->event_info.exit->has_exit_code) {
+                event->process->has_exit_code = TRUE;
+                event->process->exit_code = event->event_info.exit->exit_code;
+            }
+
             break;
         
         default:
@@ -156,7 +172,7 @@ static void find_missing_info(GTreeNode *node)
     union {
         guint32 raw;
         struct {
-            guint32 name:1, unused:31;
+            guint32 name:1, exit_code:1, exit_framenum:1, unused:29;
         };
     } missing;
 
@@ -165,6 +181,12 @@ static void find_missing_info(GTreeNode *node)
     // find what's missing
     if (process->name == NULL)
         missing.name = 1;
+    
+    if (process->exit_framenum == 0)
+        missing.exit_framenum = 1;
+    
+    if (!process->has_exit_code)
+        missing.exit_code = 1;
     
     // walk events forwards, searching for missing info
     curr_node = g_tree_node_next(node);
@@ -188,6 +210,17 @@ static void find_missing_info(GTreeNode *node)
                 break;
             
             case PROCESS_EXIT:
+                if (missing.exit_framenum) {
+                    process->exit_framenum = curr_event->framenum;
+                    missing.exit_framenum = 0;
+                }
+                
+                if (missing.exit_code && curr_event->event_info.exit->has_exit_code) {
+                    process->has_exit_code = TRUE;
+                    process->exit_code = curr_event->event_info.exit->exit_code;
+                    missing.exit_code = 0;
+                }
+                
                 // end of this process - all info from here is invalid
                 stop = TRUE;
                 break;
@@ -316,4 +349,13 @@ const struct process_info *traceshark_update_process_fork(guint32 machine_id, co
     pid_lifecycle_update(machine_id, child_pid, ts, framenum, PROCESS_START, child_start_info);
 
     return process_info;
+}
+
+const struct process_info *traceshark_update_process_exit(guint32 machine_id, const nstime_t *ts, guint32 framenum, union pid pid, gboolean has_exit_code, union exit_code exit_code)
+{
+    struct process_exit_info *exit_info = wmem_new0(wmem_file_scope(), struct process_exit_info);
+    exit_info->has_exit_code = has_exit_code;
+    exit_info->exit_code = exit_code;
+
+    return pid_lifecycle_update(machine_id, pid, ts, framenum, PROCESS_EXIT, exit_info);
 }

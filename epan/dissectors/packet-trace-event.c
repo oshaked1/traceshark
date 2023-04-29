@@ -13,7 +13,9 @@ static dissector_table_t event_type_dissector_table;
 static int hf_pid_linux = -1;
 static int hf_process_name = -1;
 static int hf_pid_and_name = -1;
+static int hf_exit_code_linux = -1;
 static int hf_start_framenum = -1;
+static int hf_exit_framenum = -1;
 
 /**
  * Additional frame fields
@@ -82,9 +84,27 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     item = traceshark_proto_tree_add_string(process_tree, hf_pid_and_name, tvb, 0, 0, pid_and_name);
     proto_item_set_hidden(item);
 
+    // add exit code
+    if (dissector_data->process->has_exit_code) {
+        switch (dissector_data->event_type) {
+            case EVENT_TYPE_LINUX_TRACE_EVENT:
+                traceshark_proto_tree_add_int(process_tree, hf_exit_code_linux, tvb, 0, 0, process->exit_code._linux);
+                break;
+            
+            default:
+                DISSECTOR_ASSERT_NOT_REACHED();
+        }
+    }
+
     // add start frame
-    if (process->start_framenum != 0) {
+    if (process->start_framenum != 0 && process->start_framenum != pinfo->num) {
         item = traceshark_proto_tree_add_uint(process_tree, hf_start_framenum, tvb, 0, 0, process->start_framenum);
+        proto_item_set_generated(item);
+    }
+
+    // add exit frame
+    if (process->exit_framenum != 0 && process->exit_framenum != pinfo->num) {
+        item = traceshark_proto_tree_add_uint(process_tree, hf_exit_framenum, tvb, 0, 0, process->exit_framenum);
         proto_item_set_generated(item);
     }
 }
@@ -181,10 +201,20 @@ void proto_register_trace_event(void)
             FT_STRINGZ, BASE_NONE, NULL, 0,
             "Process ID and name", HFILL }
         },
+        { &hf_exit_code_linux,
+          { "Exit Code", "process.exit_code",
+            FT_INT32, BASE_DEC, NULL, 0,
+            "Process exit code", HFILL }
+        },
         { &hf_start_framenum,
           { "Started in", "process.start",
             FT_FRAMENUM, BASE_NONE, NULL, 0,
             "Process start frame", HFILL }
+        },
+        { &hf_exit_framenum,
+          { "Exited in", "process.exit",
+            FT_FRAMENUM, BASE_NONE, NULL, 0,
+            "Process exit frame", HFILL }
         }
     };
     

@@ -26,12 +26,23 @@ union pid {
     guint32 raw;
 };
 
+// differentiate between Linux exit codes which are a signed 32-bit value
+// and Windows exit codes which are an unsigned 32-bit value
+union exit_code {
+    gint32 _linux; // the Linux build environment predefines "linux" so we can't use it
+    guint32 windows;
+    guint32 raw;
+};
+
 struct process_info {
     union pid pid;
     gchar *name;
+    gboolean has_exit_code;
+    union exit_code exit_code;
 
     // references to lifetime events
     guint32 start_framenum;
+    guint32 exit_framenum;
 };
 
 struct traceshark_dissector_data {
@@ -42,8 +53,8 @@ struct traceshark_dissector_data {
 
 enum process_event_type {
     PROCESS_NO_EVENT,
-    PROCESS_FORK,
     PROCESS_START,
+    PROCESS_FORK,
     PROCESS_EXEC,
     PROCESS_EXIT
 };
@@ -59,5 +70,6 @@ enum process_event_type {
 const struct process_info *traceshark_get_process_info(guint32 machine_id, union pid pid, const nstime_t *ts);
 
 const struct process_info *traceshark_update_process_fork(guint32 machine_id, const nstime_t *ts, guint32 framenum, union pid parent_pid, union pid child_pid, const gchar *child_name);
+const struct process_info *traceshark_update_process_exit(guint32 machine_id, const nstime_t *ts, guint32 framenum, union pid pid, gboolean has_exit_code, union exit_code exit_code);
 
 #endif /* __EPAN_TRACESHARK_H__ */
