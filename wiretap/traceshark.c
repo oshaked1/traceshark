@@ -31,14 +31,13 @@ struct traceshark_event_format_block {
 // machine info block options
 enum machine_info_block_options {
     OPT_MIB_HOSTNAME = 1,
-    OPT_MIB_OS_TYPE,
     OPT_MIB_OS_VERSION,
-    OPT_MIB_ARCH,
     OPT_MIB_NUM_CPUS
 };
 
 struct traceshark_machine_info_block {
-    guint32 machine_id;
+    guint16 os_type;
+    guint16 arch;
     /* ... Options ... */
 };
 
@@ -77,7 +76,7 @@ static gboolean process_linux_trace_event_option(wtapng_block_t *wblock, struct 
 static gboolean process_machine_info_option(wtapng_block_t *wblock, struct pcapng_option_header *header, void *value, gboolean byte_swapped)
 {
     struct traceshark_wblock_custom_data *custom_data = (struct traceshark_wblock_custom_data *)wblock->custom_data;
-    struct traceshark_machine_info_data *machine_info = (struct traceshark_machine_info_data *)custom_data->data.machine_info_data;
+    struct traceshark_machine_info *machine_info = (struct traceshark_machine_info *)custom_data->data.machine_info;
 
     switch (header->type) {
         case OPT_MIB_HOSTNAME:
@@ -88,28 +87,12 @@ static gboolean process_machine_info_option(wtapng_block_t *wblock, struct pcapn
             machine_info->hostname = g_strdup((gchar *)value);
             return TRUE;
         
-        case OPT_MIB_OS_TYPE:
-            if (header->value_length != sizeof(guint16))
-                return FALSE;
-            machine_info->os_type = ((guint16 *)value)[0];
-            if (byte_swapped)
-                machine_info->os_type = GUINT16_SWAP_LE_BE(machine_info->os_type);
-            return TRUE;
-        
         case OPT_MIB_OS_VERSION:
             // make sure there is a null-terminator
             if (((gchar *)value)[header->value_length - 1] != 0)
                 return FALSE;
             
             machine_info->os_version = g_strdup((gchar *)value);
-            return TRUE;
-        
-        case OPT_MIB_ARCH:
-            if (header->value_length != sizeof(guint16))
-                return FALSE;
-            machine_info->arch = ((guint16 *)value)[0];
-            if (byte_swapped)
-                machine_info->arch = GUINT16_SWAP_LE_BE(machine_info->arch);
             return TRUE;
         
         case OPT_MIB_NUM_CPUS:
@@ -384,33 +367,17 @@ static gboolean write_linux_trace_event_options(wtap_dumper *wdh, const wtap_rec
     return TRUE;
 }
 
-static gboolean write_machine_info_options(wtap_dumper *wdh, const struct traceshark_machine_info_data *machine_info, int *err)
+static gboolean write_machine_info_options(wtap_dumper *wdh, const struct traceshark_machine_info *machine_info, int *err)
 {
-    guint16 os_type, arch;
-
     // write hostname option
     if (machine_info->hostname != NULL) {
         if (!write_option(wdh, OPT_MIB_HOSTNAME, (guint32)strlen(machine_info->hostname) + 1, machine_info->hostname, err))
-            return FALSE;
-    }
-    
-    // write os type option
-    if (machine_info->os_type != OS_UNKNOWN) {
-        os_type = (guint16)machine_info->os_type;
-        if (!write_option(wdh, OPT_MIB_OS_TYPE, sizeof(os_type), &os_type, err))
             return FALSE;
     }
 
     // write os version option
     if (machine_info->os_version != NULL) {
         if (!write_option(wdh, OPT_MIB_OS_VERSION, (guint32)strlen(machine_info->os_version) + 1, machine_info->os_version, err))
-            return FALSE;
-    }
-
-    // write arch option
-    if (machine_info->arch != ARCH_UNKNOWN) {
-        arch = (guint16)machine_info->arch;
-        if (!write_option(wdh, OPT_MIB_ARCH, sizeof(arch), &arch, err))
             return FALSE;
     }
 
@@ -428,7 +395,7 @@ static gboolean write_options(wtap_dumper *wdh, guint32 block_type, const void *
     struct pcapng_option_header header;
     wtap_rec *rec;
     struct event_options *metadata;
-    struct traceshark_machine_info_data *machine_info;
+    struct traceshark_machine_info *machine_info;
 
     switch (block_type) {
         case BLOCK_TYPE_EVENT:
@@ -446,7 +413,7 @@ static gboolean write_options(wtap_dumper *wdh, guint32 block_type, const void *
             break;
         
         case BLOCK_TYPE_MACHINE_INFO:
-            machine_info = (struct traceshark_machine_info_data *)data;
+            machine_info = (struct traceshark_machine_info *)data;
             if (!write_machine_info_options(wdh, machine_info, err))
                 return FALSE;
             break;
@@ -632,9 +599,9 @@ static gboolean traceshark_read_event_format_block(FILE_T fh, guint32 block_read
 
     // set up custom data and add it to wblock
     custom_data = g_new0(struct traceshark_wblock_custom_data, 1);
-    custom_data->data.event_format_data.machine_id = block.machine_id;
-    custom_data->data.event_format_data.event_type = block.event_type;
-    custom_data->data.event_format_data.format_data = buf;
+    custom_data->data.event_formats.machine_id = block.machine_id;
+    custom_data->data.event_formats.event_type = block.event_type;
+    custom_data->data.event_formats.format_data = buf;
     wblock->custom_data = custom_data;
 
     wblock->internal = TRUE;
@@ -713,9 +680,9 @@ error:
     cb_data->failed = TRUE;
 }
 
-void free_machine_info_data_cb(gpointer data)
+void free_machine_info_cb(gpointer data)
 {
-    struct traceshark_machine_info_data *machine_info = (struct traceshark_machine_info_data *)data;
+    struct traceshark_machine_info *machine_info = (struct traceshark_machine_info *)data;
 
     g_free(machine_info->hostname);
     g_free(machine_info->os_version);
@@ -727,7 +694,6 @@ static gboolean traceshark_read_machine_info_block(FILE_T fh, guint32 block_read
 {
     struct traceshark_machine_info_block block;
     struct traceshark_wblock_custom_data *custom_data;
-    struct traceshark_machine_info_data *machine_info;
 
     // make sure we can read a full block header
     if (sizeof(block) > block_read) {
@@ -742,14 +708,16 @@ static gboolean traceshark_read_machine_info_block(FILE_T fh, guint32 block_read
     block_read -= sizeof(block);
 
     // fix byte order
-    if (byte_swapped)
-        block.machine_id = GUINT32_SWAP_LE_BE(block.machine_id);
+    if (byte_swapped) {
+        block.os_type = GUINT16_SWAP_LE_BE(block.os_type);
+        block.arch = GUINT16_SWAP_LE_BE(block.arch);
+    }
     
     // set up custom data and add it to wblock
     custom_data = g_new(struct traceshark_wblock_custom_data, 1);
-    machine_info = g_new0(struct traceshark_machine_info_data, 1);
-    custom_data->data.machine_info_data = machine_info;
-    machine_info->machine_id = block.machine_id;
+    custom_data->data.machine_info = g_new0(struct traceshark_machine_info, 1);
+    custom_data->data.machine_info->os_type = block.os_type;
+    custom_data->data.machine_info->arch = block.arch;
     wblock->custom_data = custom_data;
     
     // remaining block data is options
@@ -773,7 +741,7 @@ error:
     return FALSE;
 }
 
-static guint32 compute_machine_info_block_options_size(struct traceshark_machine_info_data *machine_info)
+static guint32 compute_machine_info_block_options_size(struct traceshark_machine_info *machine_info)
 {
     guint num_options = 0;
     guint32 options_data_size = 0;
@@ -788,13 +756,6 @@ static guint32 compute_machine_info_block_options_size(struct traceshark_machine
             options_data_size += 4 - (options_data_size % 4);
     }
 
-    // OS type
-    num_options++;
-    options_data_size += sizeof(guint16);
-
-    // pad to 32-bit boundary
-    options_data_size += 2;
-
     // OS version
     if (machine_info->os_version != NULL) {
         num_options++;
@@ -805,13 +766,6 @@ static guint32 compute_machine_info_block_options_size(struct traceshark_machine
             options_data_size += 4 - (options_data_size % 4);
     }
 
-    // architecture
-    num_options++;
-    options_data_size += sizeof(guint16);
-
-    // pad to 32-bit boundary
-    options_data_size += 2;
-
     // num CPUs
     if (machine_info->num_cpus > 0) {
         num_options++;
@@ -821,20 +775,22 @@ static guint32 compute_machine_info_block_options_size(struct traceshark_machine
     return sizeof(struct pcapng_option_header) * (num_options + 1) + options_data_size;
 }
 
-void traceshark_write_machine_info_block(gpointer key _U_, gpointer value, gpointer user_data)
+void traceshark_write_machine_info_block(gpointer data, gpointer user_data)
 {
     pcapng_block_header_t bh;
     struct traceshark_machine_info_block mib;
     guint32 options_size;
-    struct traceshark_machine_info_data *machine_info = (struct traceshark_machine_info_data *)value;
+    struct traceshark_machine_info *machine_info = (struct traceshark_machine_info *)data;
     struct dumper_cb_data *cb_data = (struct dumper_cb_data *)user_data;
 
     if (cb_data->failed)
         return;
     
-    mib.machine_id = machine_info->machine_id;
+    // populate machine info block fields
+    mib.os_type = (guint16)machine_info->os_type;
+    mib.arch = (guint16)machine_info->arch;
 
-    ws_debug("adding machine info block for machine ID %u", mib.machine_id);
+    ws_debug("adding machine info block");
 
     options_size = compute_machine_info_block_options_size(machine_info);
 

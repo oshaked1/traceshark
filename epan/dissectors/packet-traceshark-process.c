@@ -79,7 +79,7 @@ static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
 
     event_str = try_val_to_str(event, process_events);
     DISSECTOR_ASSERT(event_str != NULL);
-    col_add_fstr(pinfo->cinfo, COL_INFO, event_str);
+    col_add_str(pinfo->cinfo, COL_INFO, event_str);
     proto_item_append_text(*process_event_item, ": %s", event_str);
 
     traceshark_proto_tree_add_uint(*process_event_tree, hf_event, tvb, 0, 0, event);

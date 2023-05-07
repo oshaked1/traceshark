@@ -1488,7 +1488,7 @@ wtap_close(wtap *wth)
         g_hash_table_destroy(wth->trace_event_raw_formats);
     
     if (wth->machines != NULL)
-        g_hash_table_destroy(wth->machines);
+        g_ptr_array_free(wth->machines, TRUE);
 
     g_free(wth);
 }

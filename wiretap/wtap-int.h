@@ -76,21 +76,20 @@ struct wtap {
     GPtrArray                   *fast_seek;
 
     /* Traceshark data */
-    GHashTable *trace_event_raw_formats;    /* A hash table of raw event format data for each
-                                             * machine and event type.
-                                             * The key is a combination of the machine ID and
-                                             * the event type, and each value is of type Buffer*.
-                                             */
-    GHashTable *linux_trace_event_formats;  /* A hash table of Linux trace event formats for each machine.
-                                             * The key is the machine ID, each value is
-                                             * of type struct linux_trace_event_format**.
-                                             * The number of formats for each machine is
-                                             * always 65536 (2^16 - the number of possible events).
-                                             */
-    GHashTable *machines;                   /* A hash table of machine ID to a
-                                             * struct traceshark_machine_info_data
-                                             * with information on that machine.
-                                             */
+    GHashTable *trace_event_raw_formats;   /* A hash table of raw event format data for each
+                                            * machine and event type.
+                                            * The key is a combination of the machine ID and
+                                            * the event type, and each value is of type Buffer*.
+                                            */
+    GHashTable *linux_trace_event_formats; /* A hash table of Linux trace event formats for each machine.
+                                            * The key is the machine ID, each value is
+                                            * of type struct linux_trace_event_format**.
+                                            * The number of formats for each machine is
+                                            * always 65536 (2^16 - the number of possible events).
+                                            */
+    GPtrArray *machines;                   /* An array of machine info (struct traceshark_machine_info *)
+                                            * indexed by the machine ID.
+                                            */
 };
 
 struct wtap_dumper;
@@ -143,10 +142,9 @@ struct wtap_dumper {
                                           * The key is a combination of the machine ID and
                                           * the event type, and each value is of type Buffer*.
                                           */
-    GHashTable *machines;                 /* A hash table of machine ID to a
-                                           * struct traceshark_machine_info_data
-                                           * with information on that machine.
-                                           */
+    GPtrArray *machines;                 /* An array of machine info (struct traceshark_machine_info *)
+                                          * indexed by the machine ID.
+                                          */
 };
 
 WS_DLL_PUBLIC gboolean wtap_dump_file_write(wtap_dumper *wdh, const void *buf,

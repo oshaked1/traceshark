@@ -44,8 +44,7 @@ enum arch {
     ARCH_X86_64
 };
 
-struct traceshark_machine_info_data {
-    guint32 machine_id;
+struct traceshark_machine_info {
     gchar *hostname;
     enum os_type os_type;
     gchar *os_version;
@@ -55,8 +54,8 @@ struct traceshark_machine_info_data {
 
 struct traceshark_wblock_custom_data {
     union {
-        struct traceshark_event_format_data event_format_data;
-        struct traceshark_machine_info_data *machine_info_data;
+        struct traceshark_event_format_data event_formats;
+        struct traceshark_machine_info *machine_info;
     } data;
 };
 
@@ -65,8 +64,8 @@ gboolean traceshark_process_event_format_data(wtap *wth, guint32 machine_id, gui
 void destroy_buffer_cb(gpointer pbuf);
 
 void traceshark_write_event_format_block(gpointer key, gpointer value, gpointer user_data);
-void traceshark_write_machine_info_block(gpointer key, gpointer value, gpointer user_data);
+void traceshark_write_machine_info_block(gpointer data, gpointer user_data);
 
-void free_machine_info_data_cb(gpointer data);
+void free_machine_info_cb(gpointer data);
 
 #endif /* __WTAP_TRACESHARK_H__ */

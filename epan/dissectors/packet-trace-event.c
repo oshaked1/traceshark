@@ -115,7 +115,7 @@ static int dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
     proto_tree *frame_tree, *machine_info_tree;
     struct event_options *metadata;
     struct traceshark_dissector_data *dissector_data;
-    const struct traceshark_machine_info_data *machine_info;
+    const struct traceshark_machine_info *machine_info;
     dissector_handle_t event_type_dissector;
     int ret;
     
@@ -135,30 +135,28 @@ static int dissect_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tr
 
     traceshark_proto_tree_add_uint(machine_info_tree, hf_machine_id, tvb, 0, 0, metadata->machine_id);
 
-    // fetch machine info and add fields (machine_id == 0 means no machine identity)
-    if (metadata->machine_id != 0) {
-        machine_info = epan_get_machine_info(pinfo->epan, metadata->machine_id);
-        DISSECTOR_ASSERT_HINT(machine_info != NULL, "Couldn't fetch machine info");
+    // fetch machine info and add fields
+    machine_info = epan_get_machine_info(pinfo->epan, metadata->machine_id);
+    DISSECTOR_ASSERT_HINT(machine_info != NULL, "Couldn't fetch machine info");
 
-        if (machine_info->hostname != NULL) {
-            traceshark_proto_tree_add_string(machine_info_tree, hf_hostname, tvb, 0, 0, machine_info->hostname);
-            item = traceshark_proto_tree_add_string(machine_info_tree, hf_machine_id_and_hostname, tvb, 0, 0, wmem_strdup_printf(pinfo->pool, "%s (%u)", machine_info->hostname, machine_info->machine_id));
-        }
-        else
-            item = traceshark_proto_tree_add_string(machine_info_tree, hf_machine_id_and_hostname, tvb, 0, 0, wmem_strdup_printf(pinfo->pool, "%u", machine_info->machine_id));
-        
-        proto_item_set_hidden(item);
-        
-        traceshark_proto_tree_add_uint(machine_info_tree, hf_os_type, tvb, 0, 0, machine_info->os_type);
-
-        if (machine_info->os_version != NULL)
-            traceshark_proto_tree_add_string(machine_info_tree, hf_os_version, tvb, 0, 0, machine_info->os_version);
-        
-        traceshark_proto_tree_add_uint(machine_info_tree, hf_arch, tvb, 0, 0, machine_info->arch);
-
-        if (machine_info->num_cpus > 0)
-            traceshark_proto_tree_add_uint(machine_info_tree, hf_num_cpus, tvb, 0, 0, machine_info->num_cpus);
+    if (machine_info->hostname != NULL) {
+        traceshark_proto_tree_add_string(machine_info_tree, hf_hostname, tvb, 0, 0, machine_info->hostname);
+        item = traceshark_proto_tree_add_string(machine_info_tree, hf_machine_id_and_hostname, tvb, 0, 0, wmem_strdup_printf(pinfo->pool, "%s (%u)", machine_info->hostname, metadata->machine_id));
     }
+    else
+        item = traceshark_proto_tree_add_string(machine_info_tree, hf_machine_id_and_hostname, tvb, 0, 0, wmem_strdup_printf(pinfo->pool, "%u", metadata->machine_id));
+    
+    proto_item_set_hidden(item);
+    
+    traceshark_proto_tree_add_uint(machine_info_tree, hf_os_type, tvb, 0, 0, machine_info->os_type);
+
+    if (machine_info->os_version != NULL)
+        traceshark_proto_tree_add_string(machine_info_tree, hf_os_version, tvb, 0, 0, machine_info->os_version);
+    
+    traceshark_proto_tree_add_uint(machine_info_tree, hf_arch, tvb, 0, 0, machine_info->arch);
+
+    if (machine_info->num_cpus > 0)
+        traceshark_proto_tree_add_uint(machine_info_tree, hf_num_cpus, tvb, 0, 0, machine_info->num_cpus);
 
     // get dissector for this event type
     if ((event_type_dissector = dissector_get_uint_handle(event_type_dissector_table, metadata->event_type)) == NULL)

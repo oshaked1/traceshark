@@ -3556,8 +3556,8 @@ pcapng_open(wtap *wth, int *err, gchar **err_info)
     // Traceshark - initialize map of machine ID and event type to raw event formats
     wth->trace_event_raw_formats = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, destroy_buffer_cb);
 
-    // Traceshark - initialize map of machine ID to machine info
-    wth->machines = g_hash_table_new_full(g_int_hash, g_int_equal, g_free, free_machine_info_data_cb);
+    // Traceshark - initialize array of machines
+    wth->machines = g_ptr_array_new_with_free_func(free_machine_info_cb);
 
     return WTAP_OPEN_MINE;
 }
@@ -3714,9 +3714,9 @@ pcapng_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err,
                 ws_debug("block type BLOCK_TYPE_EVENT_FORMAT");
 
                 custom_data = (struct traceshark_wblock_custom_data *)wblock.custom_data;
-                guint32 machine_id = custom_data->data.event_format_data.machine_id;
-                guint16 event_type = custom_data->data.event_format_data.event_type;
-                Buffer *format_data = custom_data->data.event_format_data.format_data;
+                guint32 machine_id = custom_data->data.event_formats.machine_id;
+                guint16 event_type = custom_data->data.event_formats.event_type;
+                Buffer *format_data = custom_data->data.event_formats.format_data;
 
                 // populate raw event formats map with this block's formats
                 guint64 *event_formats_key = g_new(guint64, 1);
@@ -3735,16 +3735,14 @@ pcapng_read(wtap *wth, wtap_rec *rec, Buffer *buf, int *err,
                 g_free(custom_data);
                 break;
             
-            /* Traceshark macnine info block */
+            /* Traceshark machine info block */
             case(BLOCK_TYPE_MACHINE_INFO):
                 ws_debug("block type BLOCK_TYPE_MACHINE_INFO");
 
                 custom_data = (struct traceshark_wblock_custom_data *)wblock.custom_data;
                 
-                // populate machine info map with this machine's info
-                guint32 *machine_info_key = g_new(guint32, 1);
-                *machine_info_key = custom_data->data.machine_info_data->machine_id;
-                g_hash_table_insert(wth->machines, machine_info_key, custom_data->data.machine_info_data);
+                // add machine info to machine array
+                g_ptr_array_add(wth->machines, custom_data->data.machine_info);
 
                 g_free(custom_data);
                 break;
@@ -5986,7 +5984,7 @@ static gboolean pcapng_dump(wtap_dumper *wdh,
         }
 
         if (wdh->machines) {
-            g_hash_table_foreach(wdh->machines, traceshark_write_machine_info_block, &cb_data);
+            g_ptr_array_foreach(wdh->machines, traceshark_write_machine_info_block, &cb_data);
             if (cb_data.failed)
                 return FALSE;
         }

@@ -8,7 +8,7 @@
 
 static const unsigned char tracecmd_magic[3] = { 0x17, 0x08, 0x44 };
 
-static const guint32 machine_id = 1; // trace-cmd files contain events from a single system
+static const guint32 machine_id = 0; // trace-cmd files contain events from a single system
 
 static int tracecmd_file_type_subtype = -1;
 
@@ -1361,11 +1361,10 @@ static void tracecmd_close(wtap *wth)
     g_hash_table_destroy(tracecmd->events);
 }
 
-static struct traceshark_machine_info_data *tracecmd_generate_machine_info_block(struct tracecmd *tracecmd)
+static struct traceshark_machine_info *tracecmd_generate_machine_info_block(struct tracecmd *tracecmd)
 {
-    struct traceshark_machine_info_data *machine_info = g_new0(struct traceshark_machine_info_data, 1);
+    struct traceshark_machine_info *machine_info = g_new0(struct traceshark_machine_info, 1);
 
-    machine_info->machine_id = machine_id;
     machine_info->hostname = g_strdup(tracecmd->options.hostname);
     machine_info->os_type = OS_LINUX;
     machine_info->os_version = g_strdup(tracecmd->options.kernel_version);
@@ -1439,8 +1438,8 @@ wtap_open_return_val tracecmd_open(wtap *wth, int *err, gchar **err_info)
     wtap_add_generated_idb(wth);
 
     // add machine info to wtap so it can be dumped later as a machine info block
-    wth->machines = g_hash_table_new_full(g_int_hash, g_int_equal, NULL, free_machine_info_data_cb);
-    g_hash_table_insert(wth->machines, (gpointer)&machine_id, tracecmd_generate_machine_info_block(tracecmd));
+    wth->machines = g_ptr_array_new_with_free_func(free_machine_info_cb);
+    g_ptr_array_add(wth->machines, tracecmd_generate_machine_info_block(tracecmd));
 
     return WTAP_OPEN_MINE;
 }

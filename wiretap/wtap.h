@@ -1448,9 +1448,8 @@ typedef struct wtap_dump_params {
                                              * The key is a combination of the machine ID and
                                              * the event type, and each value is of type Buffer*.
                                              */
-    GHashTable *machines;                   /* A hash table of machine ID to a
-                                             * struct traceshark_machine_info_data
-                                             * with information on that machine.
+    GPtrArray *machines;                    /* An array of machine info (struct traceshark_machine_info *)
+                                             * indexed by the machine ID.
                                              */
 } wtap_dump_params;
 

@@ -521,12 +521,15 @@ epan_get_linux_trace_event_format(const epan_t *session, guint32 machine_id, gui
     return formats[event_id];
 }
 
-const struct traceshark_machine_info_data *epan_get_machine_info(const epan_t *session, guint32 machine_id)
+const struct traceshark_machine_info *epan_get_machine_info(const epan_t *session, guint32 machine_id)
 {
     if (session->prov->wth->machines == NULL)
         return NULL;
     
-    return g_hash_table_lookup(session->prov->wth->machines, (gpointer)&machine_id);
+    if (machine_id >= session->prov->wth->machines->len)
+        return NULL;
+    
+    return g_ptr_array_index(session->prov->wth->machines, machine_id);
 }
 
 void
