@@ -14,7 +14,9 @@ static int hf_pid_linux = -1;
 static int hf_process_name = -1;
 static int hf_pid_and_name = -1;
 static int hf_exit_code_linux = -1;
+static int hf_tgid = -1;
 static int hf_start_framenum = -1;
+static int hf_thread_group_start_framenum = -1;
 static int hf_exit_framenum = -1;
 
 /**
@@ -58,6 +60,7 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     proto_tree *process_tree;
     gchar *pid_and_name;
     const struct process_info *process = dissector_data->process;
+    const struct process_info *thread_group_leader = NULL;
     
     item = proto_tree_add_item(tree, proto_trace_event, tvb, 0, 0, ENC_NA);
     proto_item_set_text(item, "Process Info");
@@ -73,6 +76,12 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
         default:
             DISSECTOR_ASSERT_NOT_REACHED();
     }
+
+    // add TGID
+    if (process->has_tgid) {
+        traceshark_proto_tree_add_int(process_tree, hf_tgid, tvb, 0, 0, process->tgid._linux);
+        thread_group_leader = traceshark_get_process_info(dissector_data->machine_id, process->tgid, &pinfo->abs_ts);
+    }
     
     // add name
     if (process->name != NULL) {
@@ -85,7 +94,7 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     proto_item_set_hidden(item);
 
     // add exit code
-    if (dissector_data->process->has_exit_code) {
+    if (process->has_exit_code) {
         switch (dissector_data->event_type) {
             case EVENT_TYPE_LINUX_TRACE_EVENT:
                 traceshark_proto_tree_add_int(process_tree, hf_exit_code_linux, tvb, 0, 0, process->exit_code._linux);
@@ -99,6 +108,12 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     // add start frame
     if (process->start_framenum != 0 && process->start_framenum != pinfo->num) {
         item = traceshark_proto_tree_add_uint(process_tree, hf_start_framenum, tvb, 0, 0, process->start_framenum);
+        proto_item_set_generated(item);
+    }
+
+    // add thread group start frame
+    if (thread_group_leader && thread_group_leader->start_framenum != 0 && thread_group_leader->start_framenum != pinfo->num) {
+        item = traceshark_proto_tree_add_uint(process_tree, hf_thread_group_start_framenum, tvb, 0, 0, thread_group_leader->start_framenum);
         proto_item_set_generated(item);
     }
 
@@ -204,10 +219,20 @@ void proto_register_trace_event(void)
             FT_INT32, BASE_DEC, NULL, 0,
             "Process exit code", HFILL }
         },
+        { &hf_tgid,
+          { "TGID", "process.tgid",
+            FT_INT32, BASE_DEC, NULL, 0,
+            "Thread group leader (identifies an entire Linux process)", HFILL }
+        },
         { &hf_start_framenum,
           { "Started in", "process.start",
             FT_FRAMENUM, BASE_NONE, NULL, 0,
             "Process start frame", HFILL }
+        },
+        { &hf_thread_group_start_framenum,
+          { "Thread group started in", "process.thread_group_start",
+            FT_FRAMENUM, BASE_NONE, NULL, 0,
+            "Thread group start frame", HFILL }
         },
         { &hf_exit_framenum,
           { "Exited in", "process.exit",

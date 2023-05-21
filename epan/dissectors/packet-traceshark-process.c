@@ -7,7 +7,7 @@
 static int proto_process = -1;
 
 static int hf_event = -1;
-static int hf_event_name = -1;
+static int hf_is_thread_event = -1;
 static int hf_child_pid_linux = -1;
 static int hf_child_name = -1;
 static int hf_clone_flags = -1;
@@ -47,44 +47,41 @@ static gint ett_process = -1;
 static gint ett_clone_flags = -1;
 
 const value_string process_events[] = {
-    { PROCESS_FORK, "Process Fork" },
-    { PROCESS_FORK_THREAD, "Thread Fork" },
-    { PROCESS_EXEC, "Process Exec" },
-    { PROCESS_EXIT, "Process Exit" },
+    { PROCESS_FORK, "Fork" },
+    { PROCESS_EXEC, "Exec" },
+    { PROCESS_EXIT, "Exit" },
     { 0, "NULL" }
 };
 
 static const true_false_string tfs_generic = { "True", "False" };
 
-static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_tree **process_event_item, proto_item **process_event_tree, struct traceshark_dissector_data *dissector_data, enum process_event_type event)
+static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_tree **process_event_item, proto_item **process_event_tree, struct traceshark_dissector_data *dissector_data, enum process_event_type event, gboolean is_thread_event)
 {
-    const gchar *event_str;
     proto_item *item;
+    const gchar *event_str;
 
     *process_event_item = proto_tree_add_item(tree, proto_process, tvb, 0, 0, ENC_NA);
     *process_event_tree = proto_item_add_subtree(*process_event_item, ett_process);
 
-    switch (event) {
-        case PROCESS_FORK:
-        case PROCESS_EXEC:
-        case PROCESS_EXIT:
-            col_set_str(pinfo->cinfo, COL_PROTOCOL, "PROCESS");
-            break;
-        case PROCESS_FORK_THREAD:
-            col_set_str(pinfo->cinfo, COL_PROTOCOL, "THREAD");
-            break;
-        default:
-            DISSECTOR_ASSERT_NOT_REACHED();
+    item = traceshark_proto_tree_add_boolean(*process_event_tree, hf_is_thread_event, tvb, 0, 0, is_thread_event);
+    proto_item_set_hidden(item);
+
+    if (is_thread_event) {
+        col_set_str(pinfo->cinfo, COL_PROTOCOL, "THREAD");
+        col_set_str(pinfo->cinfo, COL_INFO, "Thread");
+        proto_item_append_text(*process_event_item, ": %s", "Thread");
+    }
+    else {
+        col_set_str(pinfo->cinfo, COL_PROTOCOL, "PROCESS");
+        col_set_str(pinfo->cinfo, COL_INFO, "Process");
+        proto_item_append_text(*process_event_item, ": %s", "Process");
     }
 
     event_str = try_val_to_str(event, process_events);
     DISSECTOR_ASSERT(event_str != NULL);
-    col_add_str(pinfo->cinfo, COL_INFO, event_str);
-    proto_item_append_text(*process_event_item, ": %s", event_str);
-
-    traceshark_proto_tree_add_uint(*process_event_tree, hf_event, tvb, 0, 0, event);
-    item = traceshark_proto_tree_add_string(*process_event_tree, hf_event_name, tvb, 0, 0, event_str);
-    proto_item_set_hidden(item);
+    col_append_fstr(pinfo->cinfo, COL_INFO, " %s", event_str);
+    proto_item_append_text(*process_event_item, " %s", event_str);
+    traceshark_proto_tree_add_string(*process_event_tree, hf_event, tvb, 0, 0, event_str);
 
     // add PID according to its type
     switch (dissector_data->event_type) {
@@ -168,13 +165,13 @@ static int dissect_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
         default:
             DISSECTOR_ASSERT_NOT_REACHED();
     }
-    is_thread = (clone_flags & CLONE_THREAD) == CLONE_THREAD;
+    is_thread = clone_flags & CLONE_THREAD;
 
     // update PID lifecycle with this event
     if (!pinfo->fd->visited)
-        dissector_data->process = traceshark_update_process_fork(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->process->pid, child_pid, child_name);
+        dissector_data->process = traceshark_update_process_fork(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->process->pid, child_pid, child_name, is_thread);
 
-    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, is_thread ? PROCESS_FORK_THREAD : PROCESS_FORK);
+    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_FORK, is_thread);
     traceshark_proto_tree_add_int(process_event_tree, hf_child_pid_linux, tvb, 0, 0, child_pid._linux);
     traceshark_proto_tree_add_string(process_event_tree, hf_child_name, tvb, 0, 0, child_name);
     col_append_fstr(pinfo->cinfo, COL_INFO, " has spawned a new %s with PID %d (%s)", is_thread ? "thread" : "process", child_pid._linux, child_name);
@@ -194,7 +191,7 @@ static int dissect_process_exec(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     const gchar *exec_file;
     union pid old_pid;
 
-    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXEC);
+    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXEC, FALSE);
 
     // get exec file
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.sched.sched_process_exec.filename");
@@ -231,7 +228,7 @@ static int dissect_process_exit(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     if (!pinfo->fd->visited)
         dissector_data->process = traceshark_update_process_exit(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->process->pid, TRUE, error_code);
 
-    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT);
+    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT, FALSE);
 
     traceshark_proto_tree_add_int(process_event_tree, hf_error_code, tvb, 0, 0, error_code._linux);
     col_append_fstr(pinfo->cinfo, COL_INFO, " has called exit_group() with error code %d. All active threads will now be terminated.", error_code._linux);
@@ -248,14 +245,14 @@ void proto_register_process(void)
 
     static hf_register_info hf[] = {
         { &hf_event,
-          { "Event", "process_event.event",
-            FT_UINT16, BASE_DEC, VALS(process_events), 0,
-            "Process event type", HFILL }
-        },
-        { &hf_event_name,
-          { "Event Name", "process_event.event_name",
+          { "Event Name", "process_event.event",
             FT_STRINGZ, BASE_NONE, NULL, 0,
             "Process event name", HFILL }
+        },
+        { &hf_is_thread_event,
+          { "Is Thread Event", "process_event.is_thread_event",
+            FT_BOOLEAN, BASE_NONE, NULL, 0,
+            NULL, HFILL }
         },
         { &hf_child_pid_linux,
           { "Child PID", "process_event.child_pid",

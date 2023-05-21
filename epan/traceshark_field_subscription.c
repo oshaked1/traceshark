@@ -254,3 +254,9 @@ proto_item *traceshark_proto_tree_add_string(proto_tree *tree, int hfindex, tvbu
     traceshark_handle_field_subscription(hfindex, value, fvalue_set_string);
     return proto_tree_add_string(tree, hfindex, tvb, start, length, value);
 }
+
+proto_item *traceshark_proto_tree_add_boolean(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, guint32 value)
+{
+    traceshark_handle_field_subscription(hfindex, value, fvalue_set_uinteger64);
+    return proto_tree_add_boolean(tree, hfindex, tvb, start, length, value);
+}

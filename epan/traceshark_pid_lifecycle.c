@@ -12,11 +12,12 @@ struct process_fork_info {
 
 struct process_start_info {
     const gchar *name;
-    union pid parent_pid;
+    gboolean has_tgid;
+    union pid tgid;
 };
 
 struct process_exit_info {
-    gboolean has_exit_code; // to distinguish between a zero value and no value
+    gboolean has_exit_code;
     union exit_code exit_code;
 };
 
@@ -30,7 +31,7 @@ struct process_event {
         const struct process_start_info *start;
         const struct process_exit_info *exit;
     } event_info;
-    struct process_info *process; /* Process information as it was after the event occurred */
+    struct process_info *process; // process information as it was after the event occurred
 };
 
 static struct process_info *generate_empty_process_info(union pid pid)
@@ -134,6 +135,11 @@ static void update_process_info(struct process_event *event)
 
             if (event->event_info.start->name != NULL)
                 event->process->name = wmem_strdup(wmem_file_scope(), event->event_info.start->name);
+            
+            if (event->event_info.start->has_tgid) {
+                event->process->has_tgid = TRUE;
+                event->process->tgid = event->event_info.start->tgid;
+            }
             
             break;
         
@@ -322,7 +328,7 @@ static const struct process_info *pid_lifecycle_update(guint32 machine_id, union
     return event->process;
 }
 
-const struct process_info *traceshark_update_process_fork(guint32 machine_id, const nstime_t *ts, guint32 framenum, union pid pid, union pid child_pid, const gchar *child_name)
+const struct process_info *traceshark_update_process_fork(guint32 machine_id, const nstime_t *ts, guint32 framenum, union pid pid, union pid child_pid, const gchar *child_name, gboolean is_thread)
 {
     const struct process_info *process_info;
     struct process_fork_info *parent_fork_info;
@@ -340,10 +346,20 @@ const struct process_info *traceshark_update_process_fork(guint32 machine_id, co
 
     // create child start event
     child_start_info = wmem_new0(wmem_file_scope(), struct process_start_info);
-    child_start_info->parent_pid = pid;
 
     if (child_name != NULL)
         child_start_info->name = wmem_strdup(wmem_file_scope(), child_name);
+    
+    // new process group - TGID is same as PID
+    if (!is_thread) {
+        child_start_info->has_tgid = TRUE;
+        child_start_info->tgid = child_pid;
+    }
+    // new thread
+    else if (process_info->has_tgid) {
+        child_start_info->has_tgid = TRUE;
+        child_start_info->tgid = process_info->tgid;
+    }
 
     // update child
     pid_lifecycle_update(machine_id, child_pid, ts, framenum, PROCESS_START, child_start_info);

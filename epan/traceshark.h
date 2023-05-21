@@ -17,6 +17,7 @@ proto_item *traceshark_proto_tree_add_uint(proto_tree *tree, int hfindex, tvbuff
 proto_item *traceshark_proto_tree_add_int64(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, gint64 value);
 proto_item *traceshark_proto_tree_add_uint64(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, guint64 value);
 proto_item *traceshark_proto_tree_add_string(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, const char* value);
+proto_item *traceshark_proto_tree_add_boolean(proto_tree *tree, int hfindex, tvbuff_t *tvb, gint start, gint length, guint32 value);
 
 // differentiate between Linux PIDs which are a signed 32-bit value
 // and Windows PIDs which are an unsigned 32-bit value
@@ -40,6 +41,10 @@ struct process_info {
     gboolean has_exit_code;
     union exit_code exit_code;
 
+    // relations to other processes
+    gboolean has_tgid;
+    union pid tgid;
+
     // references to lifetime events
     guint32 start_framenum;
     guint32 exit_framenum;
@@ -59,7 +64,6 @@ enum process_event_type {
     PROCESS_NO_EVENT,
     PROCESS_START,
     PROCESS_FORK,
-    PROCESS_FORK_THREAD,
     PROCESS_EXEC,
     PROCESS_EXIT
 };
@@ -74,7 +78,7 @@ enum process_event_type {
  */
 const struct process_info *traceshark_get_process_info(guint32 machine_id, union pid pid, const nstime_t *ts);
 
-const struct process_info *traceshark_update_process_fork(guint32 machine_id, const nstime_t *ts, guint32 framenum, union pid parent_pid, union pid child_pid, const gchar *child_name);
+const struct process_info *traceshark_update_process_fork(guint32 machine_id, const nstime_t *ts, guint32 framenum, union pid parent_pid, union pid child_pid, const gchar *child_name, gboolean is_thread);
 const struct process_info *traceshark_update_process_exit(guint32 machine_id, const nstime_t *ts, guint32 framenum, union pid pid, gboolean has_exit_code, union exit_code exit_code);
 
 #endif /* __EPAN_TRACESHARK_H__ */
