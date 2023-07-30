@@ -201,7 +201,6 @@ set(LIBWIRESHARK_NONGENERATED_FILES
 	export_object.c
 	exported_pdu.c
 	filter_expressions.c
-    find_subtree.c
 	follow.c
 	frame_data.c
 	frame_data_sequence.c
@@ -248,7 +247,9 @@ set(LIBWIRESHARK_NONGENERATED_FILES
 	tfs.c
 	to_str.c
     traceshark_field_subscription.c
-    traceshark_pid_lifecycle.c
+    traceshark_find_subtree.c
+    traceshark_process_info.c
+    traceshark_utils.c
 	tvbparse.c
 	tvbuff.c
 	tvbuff_base64.c

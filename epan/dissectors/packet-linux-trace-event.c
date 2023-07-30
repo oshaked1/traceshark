@@ -318,8 +318,8 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     size_t system_and_name_len;
     gchar *system_and_name;
     struct dynamic_hf *dynamic_hf;
-    fvalue_t *pid_val;
-    union pid pid;
+    fvalue_t *fv;
+    pid_t pid;
     struct traceshark_dissector_data *dissector_data = (struct traceshark_dissector_data *)data;
 
     metadata = (struct event_options *)ws_buffer_start_ptr(&pinfo->rec->options_buf);
@@ -372,15 +372,16 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     dissect_event_data(tvb, pinfo, common_fields_tree, event_specific_fields_tree, format, dynamic_hf, encoding);
 
     // get PID field
-    pid_val = traceshark_subscribed_field_get_single_value("linux_trace_event.data.common_pid");
-    pid._linux = fvalue_get_sinteger(pid_val);
+    fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.common_pid");
+    pid = fvalue_get_sinteger(fv);
+    dissector_data->pid.linux = pid;
 
     // add PID and event system and name to info column and Linux trace event item
-    col_append_fstr(pinfo->cinfo, COL_INFO, ", PID = %d, %s", pid._linux, system_and_name);
-    proto_item_append_text(linux_trace_event_item, ", PID = %d, %s", pid._linux, system_and_name);
+    col_append_fstr(pinfo->cinfo, COL_INFO, ", PID = %d, %s", pid, system_and_name);
+    proto_item_append_text(linux_trace_event_item, ", PID = %d, %s", pid, system_and_name);
 
     // get process info
-    dissector_data->process = traceshark_get_process_info(dissector_data->machine_id, pid, &pinfo->abs_ts);
+    dissector_data->process_info.linux = traceshark_get_linux_process_by_pid(dissector_data->machine_id, pid, &pinfo->abs_ts);
 
     // call dissector for this event
     dissector_try_string(event_system_and_name_dissector_table, system_and_name, tvb, pinfo, tree, dissector_data);
@@ -423,7 +424,7 @@ void proto_register_linux_trace_event(void)
           "Event system", HFILL }
         },
         { &hf_event_system_and_name,
-          { "Event System and Name", "linux_trace_event.system_name",
+          { "Event System and Name", "linux_trace_event.system_and_name",
           FT_STRINGZ, BASE_NONE, NULL, 0,
           "Event system and name", HFILL }
         }
@@ -445,7 +446,7 @@ void proto_register_linux_trace_event(void)
     traceshark_register_field_subscription("linux_trace_event.data.common_pid");
 
     // register event system and name dissector table
-    event_system_and_name_dissector_table = register_dissector_table("linux_trace_event.system_name",
+    event_system_and_name_dissector_table = register_dissector_table("linux_trace_event.system_and_name",
         "Linux trace event system and name", proto_linux_trace_event, FT_STRINGZ, FALSE);
 }
 

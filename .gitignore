@@ -177,3 +177,4 @@ prepare_build.bat
 build.bat
 run.bat
 repair_build.bat
+build_and_run.bat

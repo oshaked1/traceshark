@@ -10,5 +10,6 @@ gui.column.format:
 	"Destination", "%d",
 	"Protocol", "%p",
 	"Length", "%L",
-    "PID", "%Cus:process.pid_name:0:R",
+    "PID", "%Cus:process.pid_and_name:0:R",
+    "TID", "%Cus:process.tid:0:R",
 	"Info", "%i"

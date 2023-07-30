@@ -1156,7 +1156,7 @@ static inline enum get_record_result __tracecmd_get_record(FILE_T fh, struct tra
             if (!wtap_read_bytes(fh, &buf, sizeof(guint32), err, err_info))
                 return GET_RECORD_RESULT_ERROR;
             time_delta_high = tracecmd->big_endian ? pntoh32(buf) : pletoh32(buf);
-            state->current_ts += (time_delta_high << 27) + header.time_delta;
+            state->current_ts += ((guint64)time_delta_high << 27) + header.time_delta;
 
             return GET_RECORD_RESULT_NOT_EVENT;
         
