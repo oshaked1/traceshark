@@ -34,6 +34,8 @@ static int hf_process_child_exit_frame = -1;
 static int hf_process_child_is_active = -1;
 static int hf_process_thread_tid_linux = -1;
 static int hf_process_thread_creator_tid_linux = -1;
+static int hf_process_thread_prev_tid = -1;
+static int hf_process_thread_tid_change_frame = -1;
 static int hf_process_thread_start_frame = -1;
 static int hf_process_thread_exit_frame = -1;
 static int hf_process_thread_is_active = -1;
@@ -89,6 +91,7 @@ struct linux_process_info_dissection_args {
     tvbuff_t *tvb;
     guint32 machine_id;
     nstime_t *ts;
+    guint32 framenum;
     gboolean dissect_active;
     guint active_num;
     guint inactive_num;
@@ -280,7 +283,7 @@ static void dissect_linux_process_exec_files(tvbuff_t *tvb, packet_info *pinfo, 
 
     else {
         exec_files_item = proto_tree_add_item(process_tree, proto_trace_event, tvb, 0, 0, ENC_NA);
-        proto_item_set_text(exec_files_item, ": unknown at the time of this event");
+        proto_item_set_text(exec_files_item, "Exec File: unknown at the time of this event");
     }
     
     exec_files_tree = proto_item_add_subtree(exec_files_item, ett_process_exec_files);
@@ -334,6 +337,10 @@ static gboolean dissect_linux_process_child(gpointer key _U_, gpointer value, gp
     item = proto_tree_add_uint(child_tree, hf_process_child_piid, args->tvb, 0, 0, info->info.child_piid);
     proto_item_set_generated(item);
 
+    // add start frame
+    if (info->start_frame != 0)
+        proto_tree_add_uint(child_tree, hf_process_child_start_frame, args->tvb, 0, 0, info->start_frame);
+
     // add PID
     child = traceshark_get_linux_process_by_piid(args->machine_id, info->info.child_piid);
     DISSECTOR_ASSERT(child != NULL);
@@ -346,10 +353,6 @@ static gboolean dissect_linux_process_child(gpointer key _U_, gpointer value, gp
         proto_tree_add_string(child_tree, hf_process_child_name, args->tvb, 0, 0, name);
         proto_item_append_text(child_item, " (%s)", name);
     }
-
-    // add start frame
-    if (info->start_frame != 0)
-        proto_tree_add_uint(child_tree, hf_process_child_start_frame, args->tvb, 0, 0, info->start_frame);
     
     // add exit frame
     if (info->end_frame != 0)
@@ -396,12 +399,13 @@ static gboolean dissect_linux_process_thread(gpointer key _U_, gpointer value, g
     proto_item *thread_item, *item;
     proto_tree *thread_tree;
     gchar *state;
+    pid_t tid;
     gboolean ret = FALSE; // return FALSE so traversal isn't stopped
     struct time_range_info *info = value;
     struct linux_process_info_dissection_args *args = data;
 
     // active thread
-    if (nstime_cmp(&info->start_ts, args->ts) <= 0 && (nstime_is_unset(&info->end_ts) || nstime_cmp(args->ts, &info->end_ts) <= 0)) {
+    if (nstime_cmp(&info->start_ts, args->ts) <= 0 && (nstime_is_unset(&info->end_ts) || nstime_cmp(args->ts, &info->end_ts) < 0)) {
         if (!args->dissect_active)
             return ret;
         
@@ -423,23 +427,39 @@ static gboolean dissect_linux_process_thread(gpointer key _U_, gpointer value, g
     }
 
     // current thread
-    if (info->info.thread_info.tid == args->current_thread)
-        state = "current thread";
+    if (args->dissect_active && info->info.thread_info.tid == args->current_thread) {
+        // make sure the thread didn't have a different TID at the time of this event
+        if (args->framenum >= info->info.thread_info.tid_change_frame)
+            state = "current thread";
+    }
+
+    // if the TID of this thread has changed but not yet at the time of this event, use the old TID
+    if (args->framenum < info->info.thread_info.tid_change_frame)
+        tid = info->info.thread_info.prev_tid;
+    else
+        tid = info->info.thread_info.tid;
 
     // add thread tree
     thread_item = proto_tree_add_item(args->tree, proto_trace_event, args->tvb, 0, 0, ENC_NA);
-    proto_item_set_text(thread_item, "TID %d (%s)", info->info.thread_info.tid, state);
+    proto_item_set_text(thread_item, "TID %d (%s)", tid, state);
     thread_tree = proto_item_add_subtree(thread_item, ett_process_thread_info);
-    
-    // add TID
-    proto_tree_add_int(thread_tree, hf_process_thread_tid_linux, args->tvb, 0, 0, info->info.thread_info.tid);
-
-    // add creator TID
-    proto_tree_add_int(thread_tree, hf_process_thread_creator_tid_linux, args->tvb, 0, 0, info->info.thread_info.creator_tid);
 
     // add start frame
     if (info->start_frame != 0)
         proto_tree_add_uint(thread_tree, hf_process_thread_start_frame, args->tvb, 0, 0, info->start_frame);
+    
+    // add TID
+    proto_tree_add_int(thread_tree, hf_process_thread_tid_linux, args->tvb, 0, 0, tid);
+
+    // add creator TID
+    if (info->info.thread_info.creator_tid != 0)
+        proto_tree_add_int(thread_tree, hf_process_thread_creator_tid_linux, args->tvb, 0, 0, info->info.thread_info.creator_tid);
+
+    // add previous TID and TID change frame
+    if (info->info.thread_info.tid_change_frame != 0 && info->info.thread_info.tid_change_frame <= args->framenum) {
+        proto_tree_add_int(thread_tree, hf_process_thread_prev_tid, args->tvb, 0, 0, info->info.thread_info.prev_tid);
+        proto_tree_add_uint(thread_tree, hf_process_thread_tid_change_frame, args->tvb, 0, 0, info->info.thread_info.tid_change_frame);
+    }
     
     // add exit frame
     if (info->end_frame != 0)
@@ -465,6 +485,7 @@ static void dissect_linux_process_threads(tvbuff_t *tvb, packet_info *pinfo, pro
         .tree = threads_tree,
         .tvb = tvb,
         .ts = &pinfo->abs_ts,
+        .framenum = pinfo->num,
         .dissect_active = TRUE,
         .active_num = 0,
         .inactive_num = 0,
@@ -772,6 +793,16 @@ void proto_register_trace_event(void)
           { "Creator TID", "process.thread.creator_tid",
             FT_INT32, BASE_DEC, NULL, 0,
             "Creator thread ID", HFILL }
+        },
+        { &hf_process_thread_prev_tid,
+          { "Previous TID", "process.thread.prev_tid",
+            FT_INT32, BASE_DEC, NULL, 0,
+            "Previous TID (on Linux, when a secondary thread calls exec, it inherits the TID of the main thread)", HFILL }
+        },
+        { &hf_process_thread_tid_change_frame,
+          { "TID changed in", "process.thread.tid_change_frame",
+            FT_FRAMENUM, BASE_NONE, NULL, 0,
+            "Thread ID change frame (on Linux, when a secondary thread calls exec, it inherits the TID of the main thread)", HFILL }
         },
         { &hf_process_thread_start_frame,
           { "Started in", "process.thread.start_frame",

@@ -42,7 +42,7 @@ static int hf_clone_flags_clone_io = -1;
 static int hf_clone_flags_clone_clear_sighand = -1;
 static int hf_clone_flags_clone_into_cgroup = -1;
 static int hf_clone_flags_clone_newtime = -1;
-static int hf_old_pid_linux = -1;
+static int hf_old_tid_linux = -1;
 static int hf_exec_file = -1;
 static int hf_exit_code_linux = -1;
 
@@ -210,25 +210,29 @@ static int dissect_linux_process_exec(tvbuff_t *tvb, packet_info *pinfo, proto_t
     proto_tree *process_event_tree = NULL;
     fvalue_t *fv;
     const gchar *exec_file;
-    pid_t old_pid;
+    pid_t old_tid;
 
     // get exec file
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.sched.sched_process_exec.filename");
     exec_file = wmem_strbuf_get_str(fvalue_get_strbuf(fv));
 
-    // get old PID
+    // get old TID
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.sched.sched_process_exec.old_pid");
-    old_pid = fvalue_get_sinteger(fv);
+    old_tid = fvalue_get_sinteger(fv);
+
+    // update process tracking with this event
+    if (capture_ordered_chronologically && !pinfo->fd->visited)
+        dissector_data->process_info.linux = traceshark_update_linux_process_exec(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid.linux, exec_file, old_tid);
 
     dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXEC, FALSE);
 
     traceshark_proto_tree_add_string(process_event_tree, hf_exec_file, tvb, 0, 0, exec_file);
     col_append_fstr(pinfo->cinfo, COL_INFO, " is executing %s", exec_file);
     proto_item_append_text(process_event_item, " (%s)", exec_file);
-    traceshark_proto_tree_add_int(process_event_tree, hf_old_pid_linux, tvb, 0, 0, old_pid);
+    traceshark_proto_tree_add_int(process_event_tree, hf_old_tid_linux, tvb, 0, 0, old_tid);
 
-    if (old_pid != dissector_data->pid.linux)
-        col_append_fstr(pinfo->cinfo, COL_INFO, " (exec was called from TID %d, which inherited TID %d of the main thread)", old_pid, dissector_data->pid.linux);
+    if (old_tid != dissector_data->pid.linux)
+        col_append_fstr(pinfo->cinfo, COL_INFO, " (exec was called from TID %d, which inherited TID %d of the main thread)", old_tid, dissector_data->pid.linux);
 
     return 0;
 }
@@ -441,10 +445,10 @@ void proto_register_process(void)
             FT_BOOLEAN, 64, TFS(&tfs_generic),
             0x0000000000000080, NULL, HFILL }
         },
-        { &hf_old_pid_linux,
-          { "Old PID", "process_event.old_pid",
+        { &hf_old_tid_linux,
+          { "Old TID", "process_event.old_tid",
             FT_INT32, BASE_DEC, NULL, 0,
-            "Previous PID (when a thread that isn't the thread group leader executes a file, all other threads are terminated and the executing thread inherits the leader's PID)", HFILL }
+            "Previous TID (when a thread that isn't the thread group leader executes a file, all other threads are terminated and the executing thread inherits the leader's TID)", HFILL }
         },
         { &hf_exec_file,
           { "Exec File", "process_event.exec_file",
