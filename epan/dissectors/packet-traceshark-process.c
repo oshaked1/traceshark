@@ -249,6 +249,10 @@ static int dissect_linux_process_exit_group(tvbuff_t *tvb, packet_info *pinfo, p
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.syscalls.sys_enter_exit_group.error_code");
     exit_code = (gint32)fvalue_get_sinteger64(fv);
 
+    // update process tracking with this event
+    if (capture_ordered_chronologically && !pinfo->fd->visited)
+        dissector_data->process_info.linux = traceshark_update_linux_process_exit_group(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid.linux, exit_code);
+
     dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT, FALSE);
 
     traceshark_proto_tree_add_int(process_event_tree, hf_exit_code_linux, tvb, 0, 0, exit_code);

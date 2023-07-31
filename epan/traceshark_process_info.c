@@ -353,6 +353,7 @@ static void linux_process_add_thread(struct linux_process_info *process, pid_t t
 }
 
 struct stop_thread_args {
+    gboolean all_threads;
     pid_t tid;
     const nstime_t *ts;
     guint32 exit_frame;
@@ -363,19 +364,31 @@ static gboolean stop_thread(gpointer key _U_, gpointer value, gpointer data)
     struct time_range_info *info = value;
     struct stop_thread_args *args = data;
 
-    if (info->info.thread_info.tid == args->tid) {
+    if (args->all_threads || info->info.thread_info.tid == args->tid) {
         nstime_copy(&info->end_ts, args->ts);
         info->end_frame = args->exit_frame;
     }
 
-    // return TRUE so traversal is stopped
-    return TRUE;
+    // return FALSE so traversal isn't stopped
+    return FALSE;
 }
 
 static void linux_process_stop_thread(struct linux_process_info *process, pid_t tid, const nstime_t *ts, guint32 exit_frame)
 {
     struct stop_thread_args args = {
+        .all_threads = FALSE,
         .tid = tid,
+        .ts = ts,
+        .exit_frame = exit_frame
+    };
+
+    g_tree_foreach(process->threads, stop_thread, &args);
+}
+
+static void linux_process_stop_all_threads(struct linux_process_info *process, const nstime_t *ts, guint32 exit_frame)
+{
+    struct stop_thread_args args = {
+        .all_threads = TRUE,
         .ts = ts,
         .exit_frame = exit_frame
     };
@@ -601,6 +614,31 @@ const struct linux_process_info *traceshark_update_linux_process_exec(guint32 ma
 
     // update TID change
     linux_process_change_thread_tid(process, pid, old_tid, ts, framenum);
+
+    return process;
+}
+
+const struct linux_process_info *traceshark_update_linux_process_exit_group(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t pid, gint32 exit_code)
+{
+    struct linux_process_info *process;
+
+    // no process linked to the calling thread yet - create one
+    if ((process = get_existing_linux_process_info(machine_id, pid, ts)) == NULL) {
+        process = new_linux_process_info(machine_id, pid, NULL, 0, 0);
+
+        // link this thread to the created process
+        tid_lifecycle_update(machine_id, pid, ts, process->piid, TID_LINK);
+    }
+
+    // stop all threads
+    linux_process_stop_all_threads(process, ts, framenum);
+
+    // set exit code
+    process->has_exit_code = TRUE;
+    process->exit_code = exit_code;
+
+    // set process exit frame
+    process->exit_frame = framenum;
 
     return process;
 }
