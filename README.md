@@ -1,254 +1,137 @@
-General Information
--------------------
+# Traceshark
 
-Wireshark is a network traffic analyzer, or "sniffer", for Linux, macOS,
-\*BSD and other Unix and Unix-like operating systems and for Windows.
-It uses Qt, a graphical user interface library, and libpcap and npcap as
-packet capture and filtering libraries.
+Traceshark is a set of extensions for Wireshark that allows recording and analyzing system trace activity on Windows and Linux. It is essentially a multi-platform tracing framework based on Wireshark.
 
-The Wireshark distribution also comes with TShark, which is a
-line-oriented sniffer (similar to Sun's snoop or tcpdump) that uses the
-same dissection, capture-file reading and writing, and packet filtering
-code as Wireshark, and with editcap, which is a program to read capture
-files and write the packets from that capture file, possibly in a
-different capture file format, and with some packets possibly removed
-from the capture.
+## Inspiration
 
-The official home of Wireshark is https://www.wireshark.org.
+This project was inspired by [Winshark](https://github.com/airbus-cert/Winshark) and [KernelShark](https://kernelshark.org/).
 
-The latest distribution can be found in the subdirectory https://www.wireshark.org/download
+## Core features
 
+:warning: This project is still in an early development stage, and many of the core features discussed are not implemented yet.
 
-Installation
-------------
+The following are the core features that are planned for Traceshark:
 
-The Wireshark project builds and tests regularly on the following platforms:
+- Full backwards compatibility with Wireshark
 
-  - Linux (Ubuntu)
-  - Microsoft Windows
-  - macOS / {Mac} OS X
+- Support for reading common trace file formats
+  
+  - Uses [PcapNg](https://pcapng.com/) data structures for trivial conversion, merging and manipulation of trace files using the common PcapNg format
 
-Official installation packages are available for Microsoft Windows and
-macOS.
+- Source machine tracking for trivial analysis of trace activity from multiple machines in the same file
 
-It is available as either a standard or add-on package for many popular
-operating systems and Linux distributions including Debian, Ubuntu, Fedora,
-CentOS, RHEL, Arch, Gentoo, openSUSE, FreeBSD, DragonFly BSD, NetBSD, and
-OpenBSD.
+- Dissection of common trace event formats (Linux trace events, ETW, etc.)
 
-Additionally it is available through many third-party packaging systems
-such as pkgsrc, OpenCSW, Homebrew, and MacPorts.
+- Live recording of system trace activity (using ftrace on Linux and ETW on Windows)
 
-It should run on other Unix-ish systems without too much trouble.
+- Common dissection format for events of interest across multiple event formats
 
-In some cases the current version of Wireshark might not support your
-operating system. This is the case for Windows XP, which is supported by
-Wireshark 1.10 and earlier. In other cases the standard package for
-Wireshark might simply be old. This is the case for Solaris and HP-UX.
+- Activity tracking and event enrichment for important stateful operating system workflows:
+  
+  - Process activity tracking and enrichment of events with process context information
+  
+  - File operation tracking
+  
+  - Network operation tracking
+  
+  - Linking of related events using the generated context
+  
+  - **Requires that the capture is sorted chronologically!**
 
-Python 3 is needed to build Wireshark. AsciiDoctor is required to build
-the documentation, including the man pages. Perl and flex are required
-to generate some of the source code.
+## Architecture and integration with Wireshark
 
-You must therefore install Python 3, AsciiDoctor, and GNU "flex" (vanilla
-"lex" won't work) on systems that lack them. You might need to install
-Perl as well.
+Traceshark is built into the Wireshark source (there are multiple features that cannot be implemented as separate extensions using either Lua or C).
 
-Full installation instructions can be found in the INSTALL file and in the
-Developer's Guide at https://www.wireshark.org/docs/wsdg_html_chunked/
+It utilizes existing components of Wireshark to achieve the desired goal:
 
-See also the appropriate README._OS_ files for OS-specific installation
-instructions.
+- wiretap modules for trace file format support and integration with PcapNg
 
-Usage
------
+- epan extensions for tracking activity and generating context information
 
-In order to capture packets from the network, you need to make the
-dumpcap program set-UID to root or you need to have access to the
-appropriate entry under `/dev` if your system is so inclined (BSD-derived
-systems, and systems such as Solaris and HP-UX that support DLPI,
-typically fall into this category).  Although it might be tempting to
-make the Wireshark and TShark executables setuid root, or to run them as
-root please don't.  The capture process has been isolated in dumpcap;
-this simple program is less likely to contain security holes and is thus
-safer to run as root.
+- Dissectors for the various event formats
 
-Please consult the man page for a description of each command-line
-option and interface feature.
+- High-level generic dissectors for events of interest
 
+- A Wireshark profile that adds some important fields to the displayed columns, and also colors events with high-level dissection
 
-Multiple File Types
--------------------
+- Global trace event dissector that manages event-format-specific dissection and adds the generated context information to the dissection
 
-Wireshark can read packets from a number of different file types.  See
-the Wireshark man page or the Wireshark User's Guide for a list of
-supported file formats.
+- extcap modules for recording live trace activity
 
-Wireshark can transparently read compressed versions of any of those files if
-the required compression library was available when Wireshark was compiled.
-Currently supported compression formats are:
+## Building and running
 
-- GZIP
-- ZSTD
-- LZ4
+Building Traceshark is identical to [building Wireshark](https://www.wireshark.org/docs/wsdg_html_chunked/ChapterSetup.html). Note that unlike Wireshark, Traceshark requires [Glib](https://docs.gtk.org/glib/) version 2.68 or higher.
 
-You can disable zlib support by running `cmake -DENABLE_ZLIB=OFF`.
+Currently only [trace-cmd](https://www.trace-cmd.org/) catpure files are supported, so the only way to test Traceshark is to [record using trace-cmd](https://man7.org/linux/man-pages/man1/trace-cmd-record.1.html) and load the file into Traceshark.
 
-Although Wireshark can read AIX iptrace files, the documentation on
-AIX's iptrace packet-trace command is sparse.  The `iptrace` command
-starts a daemon which you must kill in order to stop the trace. Through
-experimentation it appears that sending a HUP signal to that iptrace
-daemon causes a graceful shutdown and a complete packet is written
-to the trace file. If a partial packet is saved at the end, Wireshark
-will complain when reading that file, but you will be able to read all
-other packets.  If this occurs, please let the Wireshark developers know
-at wireshark-dev@wireshark.org; be sure to send us a copy of that trace
-file if it's small and contains non-sensitive data.
+For convenience, a capture script (`tools/traceshark/traceshark-record.sh`) is provided that records only the events which have high-level dissection added to them. The script records activity from all processes and can be stopped using Ctrl+C.
 
-Support for Lucent/Ascend products is limited to the debug trace output
-generated by the MAX and Pipline series of products.  Wireshark can read
-the output of the `wandsession`, `wandisplay`, `wannext`, and `wdd`
-commands.
+## Current features
 
-Wireshark can also read dump trace output from the Toshiba "Compact Router"
-line of ISDN routers (TR-600 and TR-650). You can telnet to the router
-and start a dump session with `snoop dump`.
+The following are the currently implemented features of Traceshark:
 
-CoSine L2 debug output can also be read by Wireshark. To get the L2
-debug output first enter the diags mode and then use
-`create-pkt-log-profile` and `apply-pkt-lozg-profile` commands under
-layer-2 category. For more detail how to use these commands, you
-should examine the help command by `layer-2 create ?` or `layer-2 apply ?`.
+- Support for trace-cmd v6 capture files (padding records are not yet supported so some capture files may not be able to load)
+  
+  - Supports conversion of trace-cmd files to PcapNg, and all PcapNg file manipulation is supported except merging files (WIP)
+  
+  - Adds machine info that is stored in trace-cmd files to all trace events
 
-To use the Lucent/Ascend, Toshiba and CoSine traces with Wireshark, you must
-capture the trace output to a file on disk.  The trace is happening inside
-the router and the router has no way of saving the trace to a file for you.
-An easy way of doing this under Unix is to run `telnet <ascend> | tee <outfile>`.
-Or, if your system has the "script" command installed, you can save
-a shell session, including telnet, to a file. For example to log to a file
-named tracefile.out:
+- Full dissection of Linux trace events (using event formats stored in trace-cmd capture files)
 
-~~~
-$ script tracefile.out
-Script started on <date/time>
-$ telnet router
-..... do your trace, then exit from the router's telnet session.
-$ exit
-Script done on <date/time>
-~~~
+- High level dissection of Linux process events
+  
+  - Process fork
+  
+  - Process exec
+  
+  - Process exit (exit_group events)
 
+- Process information tracking based on the above process events
 
-Name Resolution
----------------
+- Process context info dissection
 
-Wireshark will attempt to use reverse name resolution capabilities
-when decoding IPv4 and IPv6 packets.
+## What's next
 
-If you want to turn off name resolution while using Wireshark, start
-Wireshark with the `-n` option to turn off all name resolution (including
-resolution of MAC addresses and TCP/UDP/SMTP port numbers to names) or
-with the `-N mt` option to turn off name resolution for all
-network-layer addresses (IPv4, IPv6, IPX).
+- Add support for merging trace files and handling the separation of source machines
 
-You can make that the default setting by opening the Preferences dialog
-using the Preferences item in the Edit menu, selecting "Name resolution",
-turning off the appropriate name resolution options, and clicking "OK".
+- Add support for more process events (thread exit, process rename)
 
+- Extend support for trace-cmd capture files (padding records and v7 trace files)
 
-SNMP
-----
+- Add support for [procmon](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon) captures:
+  
+  - procmon file format
+  
+  - Dissection of procmon events
+  
+  - Process tracking for Windows
 
-Wireshark can do some basic decoding of SNMP packets; it can also use
-the libsmi library to do more sophisticated decoding by reading MIB
-files and using the information in those files to display OIDs and
-variable binding values in a friendlier fashion.  CMake  will automatically
-determine whether you have the libsmi library on your system.  If you
-have the libsmi library but _do not_ want Wireshark to use it, you can run
-cmake with the `-DENABLE_SMI=OFF` option.
+- Add support for ETW captures produced by [logman](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/logman)
+  
+  - logman catpure files
+  
+  - Dissection of ETW events
 
-How to Report a Bug
--------------------
+- Dissect file events and add file context
 
-Wireshark is under constant development, so it is possible that you will
-encounter a bug while using it. Please report bugs at https://gitlab.com/wireshark/wireshark/-/issues.
-Be sure you enter into the bug:
+- Dissect network events and add network context
+  
+  - Link network trace events with classic captured packets in the same file
 
-1. The complete build information from the "About Wireshark"
-   item in the Help menu or the output of `wireshark -v` for
-   Wireshark bugs and the output of `tshark -v` for TShark bugs;
+- Add live recording capabilities
+  
+  - Linux trace events (using ftrace)
+  
+  - ETW
 
-2. If the bug happened on Linux, the Linux distribution you were
-   using, and the version of that distribution;
+## Screenshots
 
-3. The command you used to invoke Wireshark, if you ran
-   Wireshark from the command line, or TShark, if you ran
-   TShark, and the sequence of operations you performed that
-   caused the bug to appear.
+![](screenshots/events.png)
 
-If the bug is produced by a particular trace file, please be sure to
-attach to the bug a trace file along with your bug description.  If the
-trace file contains sensitive information (e.g., passwords), then please
-do not send it.
+![](screenshots/machine_info.png)
 
-If Wireshark died on you with a 'segmentation violation', 'bus error',
-'abort', or other error that produces a UNIX core dump file, you can
-help the developers a lot if you have a debugger installed.  A stack
-trace can be obtained by using your debugger ('gdb' in this example),
-the wireshark binary, and the resulting core file.  Here's an example of
-how to use the gdb command 'backtrace' to do so.
+![](screenshots/linux_trace_event.png)
 
-~~~
-$ gdb wireshark core
-(gdb) backtrace
-..... prints the stack trace
-(gdb) quit
-$
-~~~
+![](screenshots/process_event.png)
 
-The core dump file may be named "wireshark.core" rather than "core" on
-some platforms (e.g., BSD systems).  If you got a core dump with
-TShark rather than Wireshark, use "tshark" as the first argument to
-the debugger; the core dump may be named "tshark.core".
-
-License
--------
-
-Wireshark is distributed under the GNU GPLv2. See the file COPYING for
-the full text of the license. When in doubt the full text is the legally
-binding part. These notes are just to make it easier for people that are not
-familiar with the GPLv2.
-
-There are no restrictions on its use. There are restrictions on its distribution
-in source or binary form.
-
-Most parts of Wireshark are covered by a "GPL version 2 or later" license.
-Some files are covered by different licenses that are compatible with
-the GPLv2.
-
-As a notable exception, some utilities distributed with the Wireshark source are
-covered by other licenses that are not themselves directly compatible with the
-GPLv2. This is OK, as only the tools themselves are licensed this way, the
-output of the tools is not considered a derived work, and so can be safely
-licensed for Wireshark's use. An incomplete selection of these tools includes:
- - the pidl utility (tools/pidl) is licensed under the GPLv3+.
-
-Parts of Wireshark can be built and distributed as libraries. These
-parts are still covered by the GPL, and NOT by the Lesser General Public
-License or any other license.
-
-If you integrate all or part of Wireshark into your own application, then
-that application must be released under a license compatible with the GPL.
-
-
-Disclaimer
-----------
-
-There is no warranty, expressed or implied, associated with this product.
-Use at your own risk.
-
-
-Gerald Combs <gerald@wireshark.org>
-
-Gilbert Ramirez <gram@alumni.rice.edu>
-
-Guy Harris <gharris@sonic.net>
+![](screenshots/process_info.png)
