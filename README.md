@@ -1,6 +1,6 @@
 # Traceshark
 
-Traceshark is a set of extensions for Wireshark that allows recording and analyzing system trace activity on Windows and Linux. It is essentially a multi-platform tracing framework based on Wireshark.
+Traceshark is a set of extensions for [Wireshark](https://www.wireshark.org/) that allows recording and analyzing system trace activity on Windows and Linux. It is essentially a multi-platform tracing framework based on Wireshark.
 
 ## Inspiration
 
