@@ -1147,9 +1147,39 @@ static inline enum get_record_result __tracecmd_get_record(FILE_T fh, struct tra
             return GET_RECORD_RESULT_ERROR;
         
         case RINGBUF_TYPE_PADDING:
-            *err = WTAP_ERR_UNSUPPORTED;
-            *err_info = g_strdup("unsupported padding record found");
-            return GET_RECORD_RESULT_ERROR;
+            // time_delta is 0 - padding until the end of the page
+            if (header.time_delta == 0)
+                return GET_RECORD_RESULT_END_OF_PAGE;
+            
+            // time_delta is non-zero - next 4 bytes hold the padding length
+            // make sure we can read the length without exceeding the page boundaries
+            if (offset + sizeof(guint32) > next_page(state->current_page, tracecmd->page_size))
+                return GET_RECORD_RESULT_END_OF_PAGE;
+            
+            // read the padding length
+            if (!wtap_read_bytes(fh, &buf, sizeof(guint32), err, err_info))
+                return GET_RECORD_RESULT_ERROR;
+            len = tracecmd->big_endian ? pntoh32(buf) : pletoh32(buf);
+
+            // make sure length is at least 4
+            if (len < 4) {
+                *err = WTAP_ERR_BAD_FILE;
+                *err_info = g_strdup_printf("invalid padding record length %u", len);
+                return GET_RECORD_RESULT_ERROR;
+            }
+
+            size = len - 4; // length includes the 4 byte length value which was read
+            offset = (guint64)file_tell(fh);
+
+            // make sure the length does not exceed the page boundaries
+            if (offset + size > next_page(state->current_page, tracecmd->page_size))
+                return GET_RECORD_RESULT_END_OF_PAGE;
+
+            // discard the rest of the padding data
+            if (!wtap_read_bytes(fh, NULL, size, err, err_info))
+                return GET_RECORD_RESULT_ERROR;
+            
+            return GET_RECORD_RESULT_NOT_EVENT;
         
         case RINGBUF_TYPE_TIME_EXTEND:
             // next 4 bytes contain bits 28-59 of the time delta
