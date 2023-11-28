@@ -70,7 +70,7 @@ For convenience, a capture script (`tools/traceshark/traceshark-record.sh`) is p
 
 The following are the currently implemented features of Traceshark:
 
-- Support for trace-cmd v6 capture files (padding records are not yet supported so some capture files may not be able to load)
+- Support for trace-cmd v6 capture files
   
   - Supports conversion of trace-cmd files to PcapNg, and all PcapNg file manipulation is supported except merging files (WIP)
   
@@ -85,6 +85,8 @@ The following are the currently implemented features of Traceshark:
   - Process exec
   
   - Process exit (exit_group events)
+  
+  - Thread exit
 
 - Process information tracking based on the above process events
 
@@ -94,9 +96,11 @@ The following are the currently implemented features of Traceshark:
 
 - Add support for merging trace files and handling the separation of source machines
 
-- Add support for more process events (thread exit, process rename)
+- Add support for more process events (process rename)
 
-- Extend support for trace-cmd capture files (padding records and v7 trace files)
+- Add dissection of ptrace events, add ptrace info to process context
+
+- Extend support for trace-cmd capture files (v7 trace files)
 
 - Add support for [procmon](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon) captures:
   

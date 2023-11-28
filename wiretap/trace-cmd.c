@@ -429,7 +429,7 @@ static struct linux_trace_event_format *tracecmd_parse_event_format(const gchar 
                     g_free(tmp_str);
                     tmp_str = NULL;
 
-                    tmp_length_expr = field->length_expression == NULL? "(null)" : field->length_expression;
+                    tmp_length_expr = field->length_expression == NULL ? "(null)" : field->length_expression;
                     ws_noisy("type=%s is_array=%u name=%s length=%u length_expr=%s offset=%u size=%u signed=%u", field->type, field->is_array, field->name, field->length, tmp_length_expr, field->offset, field->size, field->is_signed);
 
                     g_match_info_free(match_info);

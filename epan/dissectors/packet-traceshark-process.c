@@ -91,7 +91,7 @@ static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     // add PID according to its type
     switch (dissector_data->event_type) {
         case EVENT_TYPE_LINUX_TRACE_EVENT:
-            col_append_fstr(pinfo->cinfo, COL_INFO, ": PID %d", dissector_data->process_info.linux->pid);
+            col_append_fstr(pinfo->cinfo, COL_INFO, ": %s %d", is_thread_event ? "TID" : "PID", is_thread_event ? dissector_data->pid.linux : dissector_data->process_info.linux->pid);
             break;
         default:
             DISSECTOR_ASSERT_NOT_REACHED();
@@ -103,12 +103,20 @@ static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
         added_name = TRUE;
     }
 
-    // the event didn't happen on the main thread, clarify this
-    if (dissector_data->pid.linux != dissector_data->process_info.linux->pid) {
+    // add the PID if it's a thread event
+    if (is_thread_event) {
+        if (added_name)
+            col_append_fstr(pinfo->cinfo, COL_INFO, ", PID %d", dissector_data->process_info.linux->pid);
+        else
+            col_append_fstr(pinfo->cinfo, COL_INFO, " (PID %d)", dissector_data->process_info.linux->pid);
+    }
+    
+    // if it's a process event, add the TID only if it's not the main thread
+    else if (dissector_data->pid.linux != dissector_data->process_info.linux->pid) {
         if (added_name)
             col_append_fstr(pinfo->cinfo, COL_INFO, ", TID %d", dissector_data->pid.linux);
         else
-            col_append_fstr(pinfo->cinfo, COL_INFO, " (TID %d)");
+            col_append_fstr(pinfo->cinfo, COL_INFO, " (TID %d)", dissector_data->pid.linux);
     }
 
     if (added_name)
@@ -257,6 +265,29 @@ static int dissect_linux_process_exit_group(tvbuff_t *tvb, packet_info *pinfo, p
 
     traceshark_proto_tree_add_int(process_event_tree, hf_exit_code_linux, tvb, 0, 0, exit_code);
     col_append_fstr(pinfo->cinfo, COL_INFO, " has called exit_group() with exit status %d. All active threads will now be terminated.", exit_code);
+
+    return 0;
+}
+
+static int dissect_linux_process_exit(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data)
+{
+    struct traceshark_dissector_data *dissector_data = (struct traceshark_dissector_data *)data;
+    proto_item *process_event_item = NULL;
+    proto_tree *process_event_tree = NULL;
+    fvalue_t *fv;
+    const gchar *name;
+
+    // get process name
+    fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.sched.sched_process_exit.comm");
+    name = wmem_strbuf_get_str(fvalue_get_strbuf(fv));
+
+    // update process tracking with this event
+    if (capture_ordered_chronologically && !pinfo->fd->visited)
+        dissector_data->process_info.linux = traceshark_update_linux_process_exit(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid.linux, name);
+
+    dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT, TRUE);
+
+    col_append_fstr(pinfo->cinfo, COL_INFO, " has exited");
 
     return 0;
 }
@@ -478,18 +509,22 @@ void proto_register_process(void)
     traceshark_register_field_subscription("linux_trace_event.data.task.task_newtask.pid");
     traceshark_register_field_subscription("linux_trace_event.data.task.task_newtask.comm");
     traceshark_register_field_subscription("linux_trace_event.data.task.task_newtask.clone_flags");
+    traceshark_register_field_subscription("linux_trace_event.data.sched.sched_process_exit.comm");
 }
 
 void proto_reg_handoff_process(void)
 {
-    static dissector_handle_t linux_process_fork_handle, linux_process_exec_handle, linux_process_exit_group_handle;
+    static dissector_handle_t linux_process_fork_handle, linux_process_exec_handle, linux_process_exit_group_handle,
+                              linux_process_exit_handle;
 
     linux_process_fork_handle = create_dissector_handle(dissect_linux_process_fork, proto_process);
     linux_process_exec_handle = create_dissector_handle(dissect_linux_process_exec, proto_process);
     linux_process_exit_group_handle = create_dissector_handle(dissect_linux_process_exit_group, proto_process);
+    linux_process_exit_handle = create_dissector_handle(dissect_linux_process_exit, proto_process);
     
     // register to relevant trace events
     dissector_add_string("linux_trace_event.system_and_name", "task/task_newtask", linux_process_fork_handle);
     dissector_add_string("linux_trace_event.system_and_name", "sched/sched_process_exec", linux_process_exec_handle);
     dissector_add_string("linux_trace_event.system_and_name", "syscalls/sys_enter_exit_group", linux_process_exit_group_handle);
+    dissector_add_string("linux_trace_event.system_and_name", "sched/sched_process_exit", linux_process_exit_handle);
 }

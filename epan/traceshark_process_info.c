@@ -17,7 +17,8 @@ wmem_map_t *tid_lifecycle_map = NULL;
 enum tid_lifecycle_event_type {
     TID_LINK,   // a TID is linked to a PIID, but the thread has existed beforehand
     TID_START,  // a thread has started and the TID is linked to a PIID
-    TID_END     // a thread has ended and is unlinked from its PIID
+    TID_END,    // a thread has ended and is unlinked from its PIID
+    TID_ZOMBIE  // the main thread has ended but it's still linked to the PIID as other threads are active
 };
 
 struct tid_lifecycle_event {
@@ -53,20 +54,22 @@ static struct linux_process_info *get_existing_linux_process_info(guint32 machin
     
     // no event at this exact time - find preceding and following events to determine the PIID
     else {
-        //preceding_event = get_preceding_tid_lifecycle_event(lifecycle, ts);
         preceding_event = g_tree_get_preceding_node(lifecycle, ts);
 
-        // preceding event is a link/start event - use the linked PIID
-        if (preceding_event && (preceding_event->event_type == TID_LINK || preceding_event->event_type == TID_START))
+        // preceding event is a link/start/zombie event - use the linked PIID
+        if (preceding_event && (preceding_event->event_type == TID_LINK
+            || preceding_event->event_type == TID_START
+            || preceding_event->event_type == TID_ZOMBIE))
             piid = preceding_event->piid;
         
         // no preceding event or it is an end event - determine PIID based on the following event
         else {
-            //following_event = get_following_tid_lifecycle_event(lifecycle, ts);
             following_event = g_tree_get_following_node(lifecycle, ts);
 
-            // following event is a link/end event - use the following event's PIID
-            if (following_event && (following_event->event_type == TID_LINK || following_event->event_type == TID_END))
+            // following event is a link/end/zombie event - use the following event's PIID
+            if (following_event && (following_event->event_type == TID_LINK
+                                    || following_event->event_type == TID_END
+                                    || following_event->event_type == TID_ZOMBIE))
                 piid = following_event->piid;
             
             // no following event or it is a start event - PIID can't be determined
@@ -99,7 +102,7 @@ const struct linux_process_info *traceshark_get_linux_process_by_pid(guint32 mac
 {
     const struct linux_process_info *process;
 
-    if ((process = get_existing_linux_process_info(machine_id, tid, ts)) == NULL)
+    if ((process = get_existing_linux_process_info(machine_id, tid, ts)) == NULL || !capture_ordered_chronologically)
         return generate_anonymous_linux_process_info(tid);
     
     return process;
@@ -107,6 +110,9 @@ const struct linux_process_info *traceshark_get_linux_process_by_pid(guint32 mac
 
 const struct linux_process_info *traceshark_get_linux_process_by_piid(guint32 machine_id, guint32 piid)
 {
+    if (!capture_ordered_chronologically)
+        return NULL;
+    
     guint64 key = LINUX_PROCESS_KEY(machine_id, piid);
     return wmem_map_lookup(linux_process_map, &key);
 }
@@ -114,6 +120,9 @@ const struct linux_process_info *traceshark_get_linux_process_by_piid(guint32 ma
 const struct linux_process_info *traceshark_linux_process_get_parent(const struct linux_process_info *process, const nstime_t *ts)
 {
     struct time_range_info *info;
+
+    if (!capture_ordered_chronologically)
+        return NULL;
 
     if (process->parent_piid == NULL)
         return NULL;
@@ -128,6 +137,9 @@ const gchar *traceshark_linux_process_get_name(const struct linux_process_info *
 {
     struct time_range_info *info;
 
+    if (!capture_ordered_chronologically)
+        return NULL;
+
     if (process->name == NULL)
         return NULL;
 
@@ -140,6 +152,9 @@ const gchar *traceshark_linux_process_get_name(const struct linux_process_info *
 const gchar *traceshark_linux_process_get_exec_file(const struct linux_process_info *process, const nstime_t *ts)
 {
     struct time_range_info *info;
+
+    if (!capture_ordered_chronologically)
+        return NULL;
 
     if (process->exec_file == NULL)
         return NULL;
@@ -352,120 +367,6 @@ static void linux_process_add_thread(struct linux_process_info *process, pid_t t
     info->info.thread_info.creator_tid = creator_tid;
 }
 
-struct stop_thread_args {
-    gboolean all_threads;
-    pid_t tid;
-    const nstime_t *ts;
-    guint32 exit_frame;
-};
-
-static gboolean stop_thread(gpointer key _U_, gpointer value, gpointer data)
-{
-    struct time_range_info *info = value;
-    struct stop_thread_args *args = data;
-
-    if (args->all_threads || info->info.thread_info.tid == args->tid) {
-        nstime_copy(&info->end_ts, args->ts);
-        info->end_frame = args->exit_frame;
-    }
-
-    // return FALSE so traversal isn't stopped
-    return FALSE;
-}
-
-static void linux_process_stop_thread(struct linux_process_info *process, pid_t tid, const nstime_t *ts, guint32 exit_frame)
-{
-    struct stop_thread_args args = {
-        .all_threads = FALSE,
-        .tid = tid,
-        .ts = ts,
-        .exit_frame = exit_frame
-    };
-
-    g_tree_foreach(process->threads, stop_thread, &args);
-}
-
-static void linux_process_stop_all_threads(struct linux_process_info *process, const nstime_t *ts, guint32 exit_frame)
-{
-    struct stop_thread_args args = {
-        .all_threads = TRUE,
-        .ts = ts,
-        .exit_frame = exit_frame
-    };
-
-    g_tree_foreach(process->threads, stop_thread, &args);
-}
-
-struct update_tid_change_args {
-    pid_t new_tid;
-    pid_t old_tid;
-    guint32 framenum;
-    gboolean found;
-};
-
-static gboolean update_tid_change(gpointer key _U_, gpointer value, gpointer data)
-{
-    struct time_range_info *info = value;
-    struct update_tid_change_args *args = data;
-
-    if (info->info.thread_info.tid == args->old_tid) {
-        args->found = TRUE;
-        info->info.thread_info.prev_tid = args->old_tid;
-        info->info.thread_info.tid = args->new_tid;
-        info->info.thread_info.tid_change_frame = args->framenum;
-
-        // return TRUE so traversal is stopped
-        return TRUE;
-    }
-
-    // return FALSE so traversal isn't stopped
-    return FALSE;
-}
-
-static void linux_process_change_thread_tid(struct linux_process_info *process, pid_t new_tid, pid_t old_tid, const nstime_t *ts, guint32 framenum)
-{
-    // no change occurred
-    if (new_tid == old_tid)
-        return;
-
-    // stop thread corresponding to new TID
-    linux_process_stop_thread(process, new_tid, ts, framenum);
-
-    struct update_tid_change_args args = {
-        .new_tid = new_tid,
-        .old_tid = old_tid,
-        .framenum = framenum,
-        .found = FALSE
-    };
-    
-    // update thread corresponding to old TID
-    g_tree_foreach(process->threads, update_tid_change, &args);
-
-    // no thread corresponding to old TID - create it and update it
-    if (!args.found) {
-        linux_process_add_thread(process, old_tid, 0, NULL, 0);
-        g_tree_foreach(process->threads, update_tid_change, &args);
-    }
-}
-
-static struct linux_process_info *new_linux_process_info(guint32 machine_id, pid_t pid, const nstime_t *start_ts, guint32 start_frame, guint32 parent_piid)
-{
-    struct linux_process_info *process;
-
-    // create process
-    process = create_linux_process_info(machine_id);
-    process->pid = pid;
-    process->start_frame = start_frame;
-
-    // add main thread
-    linux_process_add_thread(process, pid, 0, start_ts, start_frame);
-    
-    if (parent_piid != 0)
-        linux_process_set_parent(process, parent_piid, start_ts, start_frame);
-
-    return process;
-}
-
 static void destroy_lifecycle_cb(gpointer key _U_, gpointer value, gpointer user_data _U_)
 {
     g_tree_destroy((GTree *)value);
@@ -518,11 +419,198 @@ static void tid_lifecycle_update(guint32 machine_id, pid_t tid, const nstime_t *
     g_tree_insert(lifecycle, ts_copy, event);
 }
 
+struct count_active_threads_args {
+    guint32 count;
+    guint32 frame;
+};
+
+static gboolean count_active_threads(gpointer key _U_, gpointer value, gpointer data)
+{
+    struct time_range_info *info = value;
+    struct count_active_threads_args *args = data;
+
+    if (info->end_frame == 0 || info->end_frame > args->frame)
+        args->count++;
+    
+    // return FALSE so traversal isn't stopped
+    return FALSE;
+}
+
+static guint32 num_active_threads(GTree *threads, guint32 frame)
+{
+    struct count_active_threads_args args = {
+        .count = 0,
+        .frame = frame
+    };
+
+    g_tree_foreach(threads, count_active_threads, &args);
+
+    return args.count;
+}
+
+enum stop_thread_mode {
+    STOP_MATCHING_THREAD,
+    STOP_ALL_THREADS,
+    STOP_ALL_SECONDARY_THREADS
+};
+
+struct stop_thread_args {
+    enum stop_thread_mode mode;
+    pid_t tid;
+    const nstime_t *ts;
+    guint32 exit_frame;
+    struct linux_process_info *process;
+};
+
+static gboolean stop_thread(gpointer key _U_, gpointer value, gpointer data)
+{
+    struct time_range_info *info = value;
+    struct stop_thread_args *args = data;
+
+    if (args->mode == STOP_ALL_THREADS ||
+       (args->mode == STOP_MATCHING_THREAD && info->info.thread_info.tid == args->tid) ||
+       (args->mode == STOP_ALL_SECONDARY_THREADS && info->info.thread_info.tid != args->process->pid)) {
+        // thread is active - stop it
+        if (nstime_is_unset(&info->end_ts)) {
+            // if the main thread is being stopped while there are other running threads, only mark it as a zombie
+            if (args->mode == STOP_MATCHING_THREAD
+                && info->info.thread_info.tid == args->process->pid
+                && num_active_threads(args->process->threads, args->exit_frame) > 1)
+                tid_lifecycle_update(args->process->machine_id, info->info.thread_info.tid, args->ts, args->process->piid, TID_ZOMBIE);
+            else
+                tid_lifecycle_update(args->process->machine_id, info->info.thread_info.tid, args->ts, args->process->piid, TID_END);
+            
+            // mark the thread end time
+            nstime_copy(&info->end_ts, args->ts);
+            info->end_frame = args->exit_frame;
+        }
+    }
+
+    // return FALSE so traversal isn't stopped
+    return FALSE;
+}
+
+static void linux_process_stop_thread(struct linux_process_info *process, pid_t tid, const nstime_t *ts, guint32 exit_frame)
+{
+    struct stop_thread_args args = {
+        .mode = STOP_MATCHING_THREAD,
+        .tid = tid,
+        .ts = ts,
+        .exit_frame = exit_frame,
+        .process = process
+    };
+
+    g_tree_foreach(process->threads, stop_thread, &args);
+}
+
+static void linux_process_stop_all_threads(struct linux_process_info *process, const nstime_t *ts, guint32 exit_frame)
+{
+    struct stop_thread_args args = {
+        .mode = STOP_ALL_THREADS,
+        .ts = ts,
+        .exit_frame = exit_frame,
+        .process = process
+    };
+
+    g_tree_foreach(process->threads, stop_thread, &args);
+}
+
+static void linux_process_stop_all_secondary_threads(struct linux_process_info *process, const nstime_t *ts, guint32 exit_frame)
+{
+    struct stop_thread_args args = {
+        .mode = STOP_ALL_SECONDARY_THREADS,
+        .ts = ts,
+        .exit_frame = exit_frame,
+        .process = process
+    };
+
+    g_tree_foreach(process->threads, stop_thread, &args);
+}
+
+struct update_tid_change_args {
+    pid_t new_tid;
+    pid_t old_tid;
+    guint32 framenum;
+    gboolean found;
+};
+
+static gboolean update_tid_change(gpointer key _U_, gpointer value, gpointer data)
+{
+    struct time_range_info *info = value;
+    struct update_tid_change_args *args = data;
+
+    if (info->info.thread_info.tid == args->old_tid) {
+        args->found = TRUE;
+        info->info.thread_info.prev_tid = args->old_tid;
+        info->info.thread_info.tid = args->new_tid;
+        info->info.thread_info.tid_change_frame = args->framenum;
+
+        // return TRUE so traversal is stopped
+        return TRUE;
+    }
+
+    // return FALSE so traversal isn't stopped
+    return FALSE;
+}
+
+static void linux_process_change_thread_tid(struct linux_process_info *process, pid_t new_tid, pid_t old_tid, const nstime_t *ts, guint32 framenum)
+{
+    // no change occurred
+    if (new_tid == old_tid)
+        return;
+
+    // stop thread corresponding to new TID
+    linux_process_stop_thread(process, new_tid, ts, framenum);
+
+    // make sure new TID is linked to the process
+    tid_lifecycle_update(process->machine_id, new_tid, ts, process->piid, TID_LINK);
+
+    struct update_tid_change_args args = {
+        .new_tid = new_tid,
+        .old_tid = old_tid,
+        .framenum = framenum,
+        .found = FALSE
+    };
+    
+    // update thread corresponding to old TID
+    g_tree_foreach(process->threads, update_tid_change, &args);
+
+    // no thread corresponding to old TID - create it and update it
+    if (!args.found) {
+        linux_process_add_thread(process, old_tid, 0, NULL, 0);
+        g_tree_foreach(process->threads, update_tid_change, &args);
+
+        // link thread to process
+        tid_lifecycle_update(process->machine_id, old_tid, ts, process->piid, TID_LINK);
+    }
+}
+
+static struct linux_process_info *new_linux_process_info(guint32 machine_id, pid_t pid, const nstime_t *start_ts, guint32 start_frame, guint32 parent_piid)
+{
+    struct linux_process_info *process;
+
+    // create process
+    process = create_linux_process_info(machine_id);
+    process->pid = pid;
+    process->start_frame = start_frame;
+
+    // add main thread
+    linux_process_add_thread(process, pid, 0, start_ts, start_frame);
+    
+    if (parent_piid != 0)
+        linux_process_set_parent(process, parent_piid, start_ts, start_frame);
+
+    return process;
+}
+
 const struct linux_process_info *traceshark_update_linux_process_fork(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t parent_tid, pid_t child_tid, const gchar *child_name, gboolean is_thread)
 {
     struct linux_process_info *process, *child_process;
     gboolean success;
     const gchar *name;
+
+    if (!capture_ordered_chronologically)
+        return generate_anonymous_linux_process_info(parent_tid);
 
     // no process linked to the parent thread yet - create one
     if ((process = get_existing_linux_process_info(machine_id, parent_tid, ts)) == NULL) {
@@ -537,12 +625,17 @@ const struct linux_process_info *traceshark_update_linux_process_fork(guint32 ma
         // link the thread to the process
         tid_lifecycle_update(machine_id, child_tid, ts, process->piid, TID_START);
 
-        // update process info
+        // update parent process with the new thread
         linux_process_add_thread(process, child_tid, parent_tid, ts, framenum);
-        success = linux_process_set_name(process, child_name, NULL, 0); // assume parent name is the same as the child's name
-        // couldn't set name with NULL ts because there is already a name
-        if (!success)
-            linux_process_set_name(process, child_name, ts, framenum);
+
+        // update parent process name if needed - assume parent name is the same as the child's name
+        if ((name = traceshark_linux_process_get_name(process, ts)) == NULL || (strncmp(name, child_name, TASK_COMM_LEN)) != 0) {
+            success = linux_process_set_name(process, child_name, NULL, 0);
+
+            // couldn't set name with NULL ts because there is already a name
+            if (!success)
+                linux_process_set_name(process, child_name, ts, framenum);
+        }
     }
 
     // child is a new process
@@ -595,6 +688,9 @@ const struct linux_process_info *traceshark_update_linux_process_exec(guint32 ma
     struct linux_process_info *process;
     const gchar *name;
 
+    if (!capture_ordered_chronologically)
+        return generate_anonymous_linux_process_info(pid);
+
     // no process linked to the calling thread yet - create one
     if ((process = get_existing_linux_process_info(machine_id, pid, ts)) == NULL) {
         process = new_linux_process_info(machine_id, pid, NULL, 0, 0);
@@ -612,8 +708,15 @@ const struct linux_process_info *traceshark_update_linux_process_exec(guint32 ma
         linux_process_set_name(process, name, ts, framenum);
     }
 
+    // if the TID has changed, the new TID is the actual PID, make sure it is updated
+    if (pid != old_tid)
+        process->pid = pid;
+
     // update TID change
     linux_process_change_thread_tid(process, pid, old_tid, ts, framenum);
+
+    // stop all secondary threads
+    linux_process_stop_all_secondary_threads(process, ts, framenum);
 
     return process;
 }
@@ -621,6 +724,9 @@ const struct linux_process_info *traceshark_update_linux_process_exec(guint32 ma
 const struct linux_process_info *traceshark_update_linux_process_exit_group(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t pid, gint32 exit_code)
 {
     struct linux_process_info *process;
+
+    if (!capture_ordered_chronologically)
+        return generate_anonymous_linux_process_info(pid);
 
     // no process linked to the calling thread yet - create one
     if ((process = get_existing_linux_process_info(machine_id, pid, ts)) == NULL) {
@@ -639,6 +745,34 @@ const struct linux_process_info *traceshark_update_linux_process_exit_group(guin
 
     // set process exit frame
     process->exit_frame = framenum;
+
+    return process;
+}
+
+const struct linux_process_info *traceshark_update_linux_process_exit(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t pid, const gchar *name)
+{
+    struct linux_process_info *process;
+    const gchar *current_name;
+    gboolean success;
+
+    if (!capture_ordered_chronologically)
+        return generate_anonymous_linux_process_info(pid);
+
+    // no process linked to the calling thread yet - create one
+    if ((process = get_existing_linux_process_info(machine_id, pid, ts)) == NULL)
+        process = new_linux_process_info(machine_id, pid, NULL, 0, 0);
+    
+    // update process name if needed
+    if ((current_name = traceshark_linux_process_get_name(process, ts)) == NULL || (strncmp(current_name, name, TASK_COMM_LEN)) != 0) {
+        success = linux_process_set_name(process, name, NULL, 0);
+
+        // couldn't set name with NULL ts because there is already a name
+        if (!success)
+            linux_process_set_name(process, name, ts, framenum);
+    }
+
+    // stop thread
+    linux_process_stop_thread(process, pid, ts, framenum);
 
     return process;
 }

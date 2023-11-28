@@ -178,3 +178,4 @@ build.bat
 run.bat
 repair_build.bat
 build_and_run.bat
+run_noisy.bat

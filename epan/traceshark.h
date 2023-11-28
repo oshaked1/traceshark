@@ -149,5 +149,6 @@ const gchar *traceshark_linux_process_get_exec_file(const struct linux_process_i
 const struct linux_process_info *traceshark_update_linux_process_fork(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t parent_tid, pid_t child_tid, const gchar *child_name, gboolean is_thread);
 const struct linux_process_info *traceshark_update_linux_process_exec(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t pid, const gchar *exec_file, pid_t old_tid);
 const struct linux_process_info *traceshark_update_linux_process_exit_group(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t pid, gint32 exit_code);
+const struct linux_process_info *traceshark_update_linux_process_exit(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t pid, const gchar *name);
 
 #endif /* __EPAN_TRACESHARK_H__ */
