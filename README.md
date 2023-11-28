@@ -88,6 +88,10 @@ The following are the currently implemented features of Traceshark:
   
   - Thread exit
 
+- High level dissection of other Linux events
+  
+  - ptrace requests
+
 - Process information tracking based on the above process events
 
 - Process context info dissection
@@ -98,7 +102,7 @@ The following are the currently implemented features of Traceshark:
 
 - Add support for more process events (process rename)
 
-- Add dissection of ptrace events, add ptrace info to process context
+- Add ptrace info to process context
 
 - Extend support for trace-cmd capture files (v7 trace files)
 
