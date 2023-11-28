@@ -576,7 +576,6 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
         proto_item_append_text(process_item, " (not tracked)");
         item = proto_tree_add_expert(process_tree, pinfo, &ei_trace_event_no_process_tracking, tvb, 0, 0);
         proto_item_append_text(item, ": capture isn't ordered chronologically (sort using the reordercap utility)");
-        return;
     }
 
     // dissect process info based on OS

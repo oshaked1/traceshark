@@ -490,11 +490,10 @@ void proto_register_process(void)
             FT_STRINGZ, BASE_NONE, NULL, 0,
             "File being executed", HFILL }
         },
-        {
-            &hf_exit_code_linux,
-            { "Exit Code", "process_event.exit_code",
-              FT_INT32, BASE_DEC, NULL, 0,
-              "Process exit code", HFILL }
+        { &hf_exit_code_linux,
+          { "Exit Code", "process_event.exit_code",
+            FT_INT32, BASE_DEC, NULL, 0,
+            "Process exit code", HFILL }
         }
     };
 
