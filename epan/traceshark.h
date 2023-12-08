@@ -41,6 +41,7 @@ struct linux_thread_info {
     pid_t creator_tid;
     pid_t prev_tid;
     guint32 tid_change_frame;
+    gboolean soft_ended;
 };
 
 /**

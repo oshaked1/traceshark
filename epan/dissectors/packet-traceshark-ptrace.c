@@ -243,7 +243,7 @@ static int dissect_ptrace_request(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     col_append_fstr(pinfo->cinfo, COL_INFO, "PID = %d, address = 0x%llx, data = 0x%llx", pid, addr, ptrace_data);
 
     // perform dissection according to event type
-    dissect_event_info(tvb, pinfo, ptrace_tree, request, request_str, pid, addr, ptrace_data, dissector_data);
+    dissect_request_info(tvb, pinfo, ptrace_tree, request, request_str, pid, addr, ptrace_data, dissector_data);
     
     return 0;
 }

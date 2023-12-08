@@ -15,10 +15,11 @@ wmem_map_t *linux_process_map = NULL;
 wmem_map_t *tid_lifecycle_map = NULL;
 
 enum tid_lifecycle_event_type {
-    TID_LINK,   // a TID is linked to a PIID, but the thread has existed beforehand
-    TID_START,  // a thread has started and the TID is linked to a PIID
-    TID_END,    // a thread has ended and is unlinked from its PIID
-    TID_ZOMBIE  // the main thread has ended but it's still linked to the PIID as other threads are active
+    TID_LINK,       // a TID is linked to a PIID, but the thread has existed beforehand
+    TID_START,      // a thread has started and the TID is linked to a PIID
+    TID_END,        // a thread has ended and is unlinked from its PIID
+    TID_ZOMBIE,     // the main thread has ended but it's still linked to the PIID as other threads are active
+    TID_SOFT_END    // a thread was marked as ended by an exit_group event, but it is still seen as active for following thread exit events
 };
 
 struct tid_lifecycle_event {
@@ -26,7 +27,7 @@ struct tid_lifecycle_event {
     guint32 piid;
 };
 
-static struct linux_process_info *get_existing_linux_process_info(guint32 machine_id, pid_t tid, const nstime_t *ts)
+static struct linux_process_info *get_existing_linux_process_info(guint32 machine_id, pid_t tid, const nstime_t *ts, gboolean soft_end_ok)
 {
     guint64 key;
     GTree *lifecycle;
@@ -62,14 +63,19 @@ static struct linux_process_info *get_existing_linux_process_info(guint32 machin
             || preceding_event->event_type == TID_ZOMBIE))
             piid = preceding_event->piid;
         
-        // no preceding event or it is an end event - determine PIID based on the following event
+        // preceding event is a soft end event and we're ok with that - use linked PIID
+        else if (preceding_event && preceding_event->event_type == TID_SOFT_END && soft_end_ok)
+            piid = preceding_event->piid;
+        
+        // no preceding event or it is an end event or it is a soft end event and we're not ok with that - determine PIID based on the following event
         else {
             following_event = g_tree_get_following_node(lifecycle, ts);
 
-            // following event is a link/end/zombie event - use the following event's PIID
+            // following event is a link/end/soft_end/zombie event - use the following event's PIID
             if (following_event && (following_event->event_type == TID_LINK
                                     || following_event->event_type == TID_END
-                                    || following_event->event_type == TID_ZOMBIE))
+                                    || following_event->event_type == TID_ZOMBIE
+                                    || following_event->event_type == TID_SOFT_END))
                 piid = following_event->piid;
             
             // no following event or it is a start event - PIID can't be determined
@@ -102,7 +108,7 @@ const struct linux_process_info *traceshark_get_linux_process_by_pid(guint32 mac
 {
     const struct linux_process_info *process;
 
-    if ((process = get_existing_linux_process_info(machine_id, tid, ts)) == NULL || !capture_ordered_chronologically)
+    if ((process = get_existing_linux_process_info(machine_id, tid, ts, FALSE)) == NULL || !capture_ordered_chronologically)
         return generate_anonymous_linux_process_info(tid);
     
     return process;
@@ -365,6 +371,7 @@ static void linux_process_add_thread(struct linux_process_info *process, pid_t t
     info->info.thread_info.prev_tid = tid;
     info->info.thread_info.tid_change_frame = 0;
     info->info.thread_info.creator_tid = creator_tid;
+    info->info.thread_info.soft_ended = FALSE;
 }
 
 static void destroy_lifecycle_cb(gpointer key _U_, gpointer value, gpointer user_data _U_)
@@ -460,6 +467,7 @@ struct stop_thread_args {
     const nstime_t *ts;
     guint32 exit_frame;
     struct linux_process_info *process;
+    gboolean soft_end;
 };
 
 static gboolean stop_thread(gpointer key _U_, gpointer value, gpointer data)
@@ -470,19 +478,28 @@ static gboolean stop_thread(gpointer key _U_, gpointer value, gpointer data)
     if (args->mode == STOP_ALL_THREADS ||
        (args->mode == STOP_MATCHING_THREAD && info->info.thread_info.tid == args->tid) ||
        (args->mode == STOP_ALL_SECONDARY_THREADS && info->info.thread_info.tid != args->process->pid)) {
-        // thread is active - stop it
-        if (nstime_is_unset(&info->end_ts)) {
+        // thread is active or soft ended - stop it
+        if (nstime_is_unset(&info->end_ts) || info->info.thread_info.soft_ended) {
             // if the main thread is being stopped while there are other running threads, only mark it as a zombie
             if (args->mode == STOP_MATCHING_THREAD
                 && info->info.thread_info.tid == args->process->pid
                 && num_active_threads(args->process->threads, args->exit_frame) > 1)
                 tid_lifecycle_update(args->process->machine_id, info->info.thread_info.tid, args->ts, args->process->piid, TID_ZOMBIE);
+            // mark as soft ended
+            else if (args->soft_end) {
+                info->info.thread_info.soft_ended = TRUE;
+                tid_lifecycle_update(args->process->machine_id, info->info.thread_info.tid, args->ts, args->process->piid, TID_SOFT_END);
+            }
             else
                 tid_lifecycle_update(args->process->machine_id, info->info.thread_info.tid, args->ts, args->process->piid, TID_END);
             
             // mark the thread end time
             nstime_copy(&info->end_ts, args->ts);
             info->end_frame = args->exit_frame;
+
+            // this was the last thread - mark the process as ended if it isn't already
+            if (num_active_threads(args->process->threads, args->exit_frame) == 0 && args->process->exit_frame == 0)
+                args->process->exit_frame = args->exit_frame;
         }
     }
 
@@ -497,19 +514,21 @@ static void linux_process_stop_thread(struct linux_process_info *process, pid_t 
         .tid = tid,
         .ts = ts,
         .exit_frame = exit_frame,
-        .process = process
+        .process = process,
+        .soft_end = FALSE
     };
 
     g_tree_foreach(process->threads, stop_thread, &args);
 }
 
-static void linux_process_stop_all_threads(struct linux_process_info *process, const nstime_t *ts, guint32 exit_frame)
+static void linux_process_stop_all_threads(struct linux_process_info *process, const nstime_t *ts, guint32 exit_frame, gboolean soft_end)
 {
     struct stop_thread_args args = {
         .mode = STOP_ALL_THREADS,
         .ts = ts,
         .exit_frame = exit_frame,
-        .process = process
+        .process = process,
+        .soft_end = soft_end
     };
 
     g_tree_foreach(process->threads, stop_thread, &args);
@@ -521,7 +540,8 @@ static void linux_process_stop_all_secondary_threads(struct linux_process_info *
         .mode = STOP_ALL_SECONDARY_THREADS,
         .ts = ts,
         .exit_frame = exit_frame,
-        .process = process
+        .process = process,
+        .soft_end = FALSE
     };
 
     g_tree_foreach(process->threads, stop_thread, &args);
@@ -613,7 +633,7 @@ const struct linux_process_info *traceshark_update_linux_process_fork(guint32 ma
         return generate_anonymous_linux_process_info(parent_tid);
 
     // no process linked to the parent thread yet - create one
-    if ((process = get_existing_linux_process_info(machine_id, parent_tid, ts)) == NULL) {
+    if ((process = get_existing_linux_process_info(machine_id, parent_tid, ts, FALSE)) == NULL) {
         process = new_linux_process_info(machine_id, parent_tid, NULL, 0, 0);
 
         // link this thread to the created process
@@ -692,7 +712,7 @@ const struct linux_process_info *traceshark_update_linux_process_exec(guint32 ma
         return generate_anonymous_linux_process_info(pid);
 
     // no process linked to the calling thread yet - create one
-    if ((process = get_existing_linux_process_info(machine_id, pid, ts)) == NULL) {
+    if ((process = get_existing_linux_process_info(machine_id, pid, ts, FALSE)) == NULL) {
         process = new_linux_process_info(machine_id, pid, NULL, 0, 0);
 
         // link this thread to the created process
@@ -729,15 +749,16 @@ const struct linux_process_info *traceshark_update_linux_process_exit_group(guin
         return generate_anonymous_linux_process_info(pid);
 
     // no process linked to the calling thread yet - create one
-    if ((process = get_existing_linux_process_info(machine_id, pid, ts)) == NULL) {
+    if ((process = get_existing_linux_process_info(machine_id, pid, ts, FALSE)) == NULL) {
         process = new_linux_process_info(machine_id, pid, NULL, 0, 0);
 
         // link this thread to the created process
         tid_lifecycle_update(machine_id, pid, ts, process->piid, TID_LINK);
     }
 
-    // stop all threads
-    linux_process_stop_all_threads(process, ts, framenum);
+    // stop all threads - use a soft end because this event may be followed by thread exit events,
+    // and marking the threads as ended here will cause these events to not be linked to this process anymore.
+    linux_process_stop_all_threads(process, ts, framenum, TRUE);
 
     // set exit code
     process->has_exit_code = TRUE;
@@ -759,7 +780,7 @@ const struct linux_process_info *traceshark_update_linux_process_exit(guint32 ma
         return generate_anonymous_linux_process_info(pid);
 
     // no process linked to the calling thread yet - create one
-    if ((process = get_existing_linux_process_info(machine_id, pid, ts)) == NULL)
+    if ((process = get_existing_linux_process_info(machine_id, pid, ts, TRUE)) == NULL)
         process = new_linux_process_info(machine_id, pid, NULL, 0, 0);
     
     // update process name if needed
