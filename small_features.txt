@@ -1,3 +1,0 @@
-- Exec events should show the previous process name instead of the current one (that was inferred from the exec file or obtained from a previous process rename event).
-- If the last thread exits mark the whole process as exited
-- If a process exits with exit_group, a following exit thread event of the last thread should be able to be linked to the previously exited process

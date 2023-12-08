@@ -97,8 +97,13 @@ static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
             DISSECTOR_ASSERT_NOT_REACHED();
     }
 
-    // add process name
-    if ((name = traceshark_linux_process_get_name(dissector_data->process_info.linux, &pinfo->abs_ts)) != NULL) {
+    // add process name (use previous name if it's an exec event)
+    if (event == PROCESS_EXEC)
+        name = traceshark_linux_process_get_prev_name(dissector_data->process_info.linux, &pinfo->abs_ts);
+    else
+        name = traceshark_linux_process_get_name(dissector_data->process_info.linux, &pinfo->abs_ts);
+    
+    if (name != NULL) {
         col_append_fstr(pinfo->cinfo, COL_INFO, " (%s", name);
         added_name = TRUE;
     }

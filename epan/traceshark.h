@@ -5,8 +5,10 @@
 #define __EPAN_TRACESHARK_H__
 
 // traceshark_utils.c
-gpointer g_tree_get_preceding_node(GTree *tree, gconstpointer key);
-gpointer g_tree_get_following_node(GTree *tree, gconstpointer key);
+GTreeNode *g_tree_get_preceding_node(GTree *tree, gconstpointer key);
+gpointer g_tree_get_preceding_value(GTree *tree, gconstpointer key);
+GTreeNode *g_tree_get_following_node(GTree *tree, gconstpointer key);
+gpointer g_tree_get_following_value(GTree *tree, gconstpointer key);
 
 // traceshark_find_subtree.c
 proto_tree *proto_find_subtree(proto_tree *tree, gint hf);
@@ -145,6 +147,7 @@ const struct linux_process_info *traceshark_get_linux_process_by_piid(guint32 ma
 
 const struct linux_process_info *traceshark_linux_process_get_parent(const struct linux_process_info *process, const nstime_t *ts);
 const gchar *traceshark_linux_process_get_name(const struct linux_process_info *process, const nstime_t *ts);
+const gchar *traceshark_linux_process_get_prev_name(const struct linux_process_info *process, const nstime_t *ts);
 const gchar *traceshark_linux_process_get_exec_file(const struct linux_process_info *process, const nstime_t *ts);
 
 const struct linux_process_info *traceshark_update_linux_process_fork(guint32 machine_id, const nstime_t *ts, guint32 framenum, pid_t parent_tid, pid_t child_tid, const gchar *child_name, gboolean is_thread);

@@ -55,7 +55,7 @@ static struct linux_process_info *get_existing_linux_process_info(guint32 machin
     
     // no event at this exact time - find preceding and following events to determine the PIID
     else {
-        preceding_event = g_tree_get_preceding_node(lifecycle, ts);
+        preceding_event = g_tree_get_preceding_value(lifecycle, ts);
 
         // preceding event is a link/start/zombie event - use the linked PIID
         if (preceding_event && (preceding_event->event_type == TID_LINK
@@ -69,7 +69,7 @@ static struct linux_process_info *get_existing_linux_process_info(guint32 machin
         
         // no preceding event or it is an end event or it is a soft end event and we're not ok with that - determine PIID based on the following event
         else {
-            following_event = g_tree_get_following_node(lifecycle, ts);
+            following_event = g_tree_get_following_value(lifecycle, ts);
 
             // following event is a link/end/soft_end/zombie event - use the following event's PIID
             if (following_event && (following_event->event_type == TID_LINK
@@ -133,7 +133,7 @@ const struct linux_process_info *traceshark_linux_process_get_parent(const struc
     if (process->parent_piid == NULL)
         return NULL;
 
-    if ((info = g_tree_lookup(process->parent_piid, ts)) != NULL || (info = g_tree_get_preceding_node(process->parent_piid, ts)) != NULL)
+    if ((info = g_tree_lookup(process->parent_piid, ts)) != NULL || (info = g_tree_get_preceding_value(process->parent_piid, ts)) != NULL)
         return traceshark_get_linux_process_by_piid(process->machine_id, info->info.parent_piid);
     
     return NULL;
@@ -149,8 +149,30 @@ const gchar *traceshark_linux_process_get_name(const struct linux_process_info *
     if (process->name == NULL)
         return NULL;
 
-    if ((info = g_tree_lookup(process->name, ts)) != NULL || (info = g_tree_get_preceding_node(process->name, ts)) != NULL)
+    if ((info = g_tree_lookup(process->name, ts)) != NULL || (info = g_tree_get_preceding_value(process->name, ts)) != NULL)
         return info->info.name;
+    
+    return NULL;
+}
+
+const gchar *traceshark_linux_process_get_prev_name(const struct linux_process_info *process, const nstime_t *ts)
+{
+    GTreeNode *res;
+    struct time_range_info *info;
+
+    if (!capture_ordered_chronologically)
+        return NULL;
+
+    if (process->name == NULL)
+        return NULL;
+
+    if ((res = g_tree_lookup_node(process->name, ts)) != NULL || (res = g_tree_get_preceding_node(process->name, ts)) != NULL) {
+        if ((res = g_tree_node_previous(res)) != NULL) {
+            if ((info = g_tree_node_value(res)) != NULL)
+                return info->info.name;
+        }
+
+    }
     
     return NULL;
 }
@@ -165,7 +187,7 @@ const gchar *traceshark_linux_process_get_exec_file(const struct linux_process_i
     if (process->exec_file == NULL)
         return NULL;
 
-    if ((info = g_tree_lookup(process->exec_file, ts)) != NULL || (info = g_tree_get_preceding_node(process->exec_file, ts)) != NULL)
+    if ((info = g_tree_lookup(process->exec_file, ts)) != NULL || (info = g_tree_get_preceding_value(process->exec_file, ts)) != NULL)
         return info->info.exec_file;
     
     return NULL;
@@ -268,7 +290,7 @@ static gboolean time_range_add_mutually_exclusive(struct time_range_info **info,
         return FALSE;
 
     // start time is known and there is an overlapping time range - mark its end
-    else if (start_ts != NULL && (prev_info = g_tree_get_preceding_node(tree, start_ts)) != NULL && nstime_is_unset(&prev_info->end_ts)) {
+    else if (start_ts != NULL && (prev_info = g_tree_get_preceding_value(tree, start_ts)) != NULL && nstime_is_unset(&prev_info->end_ts)) {
         // same info - do nothing
         if (time_range_info_eq != NULL && time_range_info_eq(prev_info, time_range_info_eq_arg)) {
             *info = NULL;
