@@ -434,9 +434,6 @@ static void tid_lifecycle_update(guint32 machine_id, pid_t tid, const nstime_t *
         wmem_map_insert(tid_lifecycle_map, pkey, lifecycle);
     }
 
-    // make sure there is no event at this exact time
-    DISSECTOR_ASSERT_HINT(g_tree_lookup(lifecycle, ts) == NULL, "Cannot update TID lifecycle - event already exists for this exact timestamp");
-
     // create event
     event = wmem_new(wmem_file_scope(), struct tid_lifecycle_event);
     event->event_type = event_type;
