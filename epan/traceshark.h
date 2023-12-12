@@ -116,10 +116,10 @@ struct traceshark_dissector_data {
     guint32 machine_id;
     guint16 event_type;
     union {
-        pid_t linux;
+        pid_t _linux;
     } pid;
     union {
-        const struct linux_process_info *linux;
+        const struct linux_process_info *_linux;
         void *raw_ptr;
     } process_info;
 };

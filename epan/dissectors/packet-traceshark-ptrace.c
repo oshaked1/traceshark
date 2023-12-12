@@ -154,12 +154,12 @@ static void dissect_request_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
             break;
         
         case PTRACE_GETEVENTMSG:
-            col_add_fstr(pinfo->cinfo, COL_INFO, "%s request: copy the message associated with the last event of PID %s to address 0x%llx",
+            col_add_fstr(pinfo->cinfo, COL_INFO, "%s request: copy the message associated with the last event of PID %s to address 0x%" PRIx64,
                          request_str, pid_str, data);
             break;
         
         case PTRACE_GETSIGINFO:
-            col_add_fstr(pinfo->cinfo, COL_INFO, "%s request: copy last signal info from PID %s to address 0x%llx", request_str, pid_str, data);
+            col_add_fstr(pinfo->cinfo, COL_INFO, "%s request: copy last signal info from PID %s to address 0x%" PRIx64, request_str, pid_str, data);
             break;
         
         case PTRACE_GETREGSET:
@@ -173,7 +173,7 @@ static void dissect_request_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
             else
                 col_append_str(pinfo->cinfo, COL_INFO, "unknown register set ");
             
-            col_append_fstr(pinfo->cinfo, COL_INFO, "of PID %s to address 0x%llx", pid_str, data);
+            col_append_fstr(pinfo->cinfo, COL_INFO, "of PID %s to address 0x%" PRIx64, pid_str, data);
             break;
         
         case PTRACE_SEIZE:
@@ -196,6 +196,9 @@ static void dissect_request_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
         case PTRACE_LISTEN:
             col_add_fstr(pinfo->cinfo, COL_INFO, "%s request: restart PID %s", request_str, pid_str);
             break;
+        
+        default:
+            DISSECTOR_ASSERT_NOT_REACHED();
     }
 }
 
@@ -239,8 +242,8 @@ static int dissect_ptrace_request(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     if (request_str != NULL)
         col_add_fstr(pinfo->cinfo, COL_INFO, "%s request: ", request_str);
     else
-        col_add_fstr(pinfo->cinfo, COL_INFO, "Unknown request 0x%llx: ", request);
-    col_append_fstr(pinfo->cinfo, COL_INFO, "PID = %d, address = 0x%llx, data = 0x%llx", pid, addr, ptrace_data);
+        col_add_fstr(pinfo->cinfo, COL_INFO, "Unknown request 0x%" PRIx64 ": ", request);
+    col_append_fstr(pinfo->cinfo, COL_INFO, "PID = %d, address = 0x%" PRIx64 ", data = 0x%" PRIx64, pid, addr, ptrace_data);
 
     // perform dissection according to event type
     dissect_request_info(tvb, pinfo, ptrace_tree, request, request_str, pid, addr, ptrace_data, dissector_data);

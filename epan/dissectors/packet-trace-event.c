@@ -581,7 +581,7 @@ static void dissect_process_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *
     // dissect process info based on OS
     switch (dissector_data->event_type) {
         case EVENT_TYPE_LINUX_TRACE_EVENT:
-            dissect_linux_process_info(tvb, pinfo, process_tree, process_item, dissector_data->pid.linux, dissector_data->process_info.linux);
+            dissect_linux_process_info(tvb, pinfo, process_tree, process_item, dissector_data->pid._linux, dissector_data->process_info._linux);
             break;
         default:
             DISSECTOR_ASSERT_NOT_REACHED();

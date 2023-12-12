@@ -91,7 +91,7 @@ static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     // add PID according to its type
     switch (dissector_data->event_type) {
         case EVENT_TYPE_LINUX_TRACE_EVENT:
-            col_append_fstr(pinfo->cinfo, COL_INFO, ": %s %d", is_thread_event ? "TID" : "PID", is_thread_event ? dissector_data->pid.linux : dissector_data->process_info.linux->pid);
+            col_append_fstr(pinfo->cinfo, COL_INFO, ": %s %d", is_thread_event ? "TID" : "PID", is_thread_event ? dissector_data->pid._linux : dissector_data->process_info._linux->pid);
             break;
         default:
             DISSECTOR_ASSERT_NOT_REACHED();
@@ -99,9 +99,9 @@ static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
 
     // add process name (use previous name if it's an exec event)
     if (event == PROCESS_EXEC)
-        name = traceshark_linux_process_get_prev_name(dissector_data->process_info.linux, &pinfo->abs_ts);
+        name = traceshark_linux_process_get_prev_name(dissector_data->process_info._linux, &pinfo->abs_ts);
     else
-        name = traceshark_linux_process_get_name(dissector_data->process_info.linux, &pinfo->abs_ts);
+        name = traceshark_linux_process_get_name(dissector_data->process_info._linux, &pinfo->abs_ts);
     
     if (name != NULL) {
         col_append_fstr(pinfo->cinfo, COL_INFO, " (%s", name);
@@ -111,17 +111,17 @@ static void dissect_common_info(tvbuff_t *tvb, packet_info *pinfo, proto_tree *t
     // add the PID if it's a thread event
     if (is_thread_event) {
         if (added_name)
-            col_append_fstr(pinfo->cinfo, COL_INFO, ", PID %d", dissector_data->process_info.linux->pid);
+            col_append_fstr(pinfo->cinfo, COL_INFO, ", PID %d", dissector_data->process_info._linux->pid);
         else
-            col_append_fstr(pinfo->cinfo, COL_INFO, " (PID %d)", dissector_data->process_info.linux->pid);
+            col_append_fstr(pinfo->cinfo, COL_INFO, " (PID %d)", dissector_data->process_info._linux->pid);
     }
     
     // if it's a process event, add the TID only if it's not the main thread
-    else if (dissector_data->pid.linux != dissector_data->process_info.linux->pid) {
+    else if (dissector_data->pid._linux != dissector_data->process_info._linux->pid) {
         if (added_name)
-            col_append_fstr(pinfo->cinfo, COL_INFO, ", TID %d", dissector_data->pid.linux);
+            col_append_fstr(pinfo->cinfo, COL_INFO, ", TID %d", dissector_data->pid._linux);
         else
-            col_append_fstr(pinfo->cinfo, COL_INFO, " (TID %d)", dissector_data->pid.linux);
+            col_append_fstr(pinfo->cinfo, COL_INFO, " (TID %d)", dissector_data->pid._linux);
     }
 
     if (added_name)
@@ -200,18 +200,18 @@ static int dissect_linux_process_fork(tvbuff_t *tvb, packet_info *pinfo, proto_t
 
     // update process tracking with this event
     if (capture_ordered_chronologically && !pinfo->fd->visited)
-        dissector_data->process_info.linux = traceshark_update_linux_process_fork(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid.linux, child_pid, child_name, is_thread);
+        dissector_data->process_info._linux = traceshark_update_linux_process_fork(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid._linux, child_pid, child_name, is_thread);
 
     dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_FORK, is_thread);
 
-    traceshark_proto_tree_add_int(process_event_tree, hf_creator_pid_linux, tvb, 0, 0, dissector_data->process_info.linux->pid);
-    traceshark_proto_tree_add_int(process_event_tree, hf_creator_tid, tvb, 0, 0, dissector_data->pid.linux);
-    traceshark_proto_tree_add_int(process_event_tree, hf_child_pid_linux, tvb, 0, 0, is_thread ? dissector_data->process_info.linux->pid : child_pid);
+    traceshark_proto_tree_add_int(process_event_tree, hf_creator_pid_linux, tvb, 0, 0, dissector_data->process_info._linux->pid);
+    traceshark_proto_tree_add_int(process_event_tree, hf_creator_tid, tvb, 0, 0, dissector_data->pid._linux);
+    traceshark_proto_tree_add_int(process_event_tree, hf_child_pid_linux, tvb, 0, 0, is_thread ? dissector_data->process_info._linux->pid : child_pid);
     traceshark_proto_tree_add_int(process_event_tree, hf_child_tid, tvb, 0, 0, child_pid);
     traceshark_proto_tree_add_string(process_event_tree, hf_child_name, tvb, 0, 0, child_name);
     col_append_fstr(pinfo->cinfo, COL_INFO, " has spawned a new %s with %s %d", is_thread ? "thread" : "process", is_thread ? "TID" : "PID", child_pid);
     dissect_linux_clone_flags(tvb, process_event_tree, clone_flags);
-    proto_item_append_text(process_event_item, " (%d -> %d)", dissector_data->process_info.linux->pid, child_pid);
+    proto_item_append_text(process_event_item, " (%d -> %d)", dissector_data->process_info._linux->pid, child_pid);
 
     return 0;
 }
@@ -235,7 +235,7 @@ static int dissect_linux_process_exec(tvbuff_t *tvb, packet_info *pinfo, proto_t
 
     // update process tracking with this event
     if (capture_ordered_chronologically && !pinfo->fd->visited)
-        dissector_data->process_info.linux = traceshark_update_linux_process_exec(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid.linux, exec_file, old_tid);
+        dissector_data->process_info._linux = traceshark_update_linux_process_exec(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid._linux, exec_file, old_tid);
 
     dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXEC, FALSE);
 
@@ -244,8 +244,8 @@ static int dissect_linux_process_exec(tvbuff_t *tvb, packet_info *pinfo, proto_t
     proto_item_append_text(process_event_item, " (%s)", exec_file);
     traceshark_proto_tree_add_int(process_event_tree, hf_old_tid_linux, tvb, 0, 0, old_tid);
 
-    if (old_tid != dissector_data->pid.linux)
-        col_append_fstr(pinfo->cinfo, COL_INFO, " (exec was called from TID %d, which inherited TID %d of the main thread)", old_tid, dissector_data->pid.linux);
+    if (old_tid != dissector_data->pid._linux)
+        col_append_fstr(pinfo->cinfo, COL_INFO, " (exec was called from TID %d, which inherited TID %d of the main thread)", old_tid, dissector_data->pid._linux);
 
     return 0;
 }
@@ -264,7 +264,7 @@ static int dissect_linux_process_exit_group(tvbuff_t *tvb, packet_info *pinfo, p
 
     // update process tracking with this event
     if (capture_ordered_chronologically && !pinfo->fd->visited)
-        dissector_data->process_info.linux = traceshark_update_linux_process_exit_group(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid.linux, exit_code);
+        dissector_data->process_info._linux = traceshark_update_linux_process_exit_group(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid._linux, exit_code);
 
     dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT, FALSE);
 
@@ -288,7 +288,7 @@ static int dissect_linux_process_exit(tvbuff_t *tvb, packet_info *pinfo, proto_t
 
     // update process tracking with this event
     if (capture_ordered_chronologically && !pinfo->fd->visited)
-        dissector_data->process_info.linux = traceshark_update_linux_process_exit(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid.linux, name);
+        dissector_data->process_info._linux = traceshark_update_linux_process_exit(dissector_data->machine_id, &pinfo->abs_ts, pinfo->num, dissector_data->pid._linux, name);
 
     dissect_common_info(tvb, pinfo, tree, &process_event_item, &process_event_tree, dissector_data, PROCESS_EXIT, TRUE);
 

@@ -715,7 +715,7 @@ static const gchar *exec_file_to_name(const gchar *exec_file)
     
     parts = g_strsplit(exec_file, "/", 100);
 
-    for (i = 0; i < 100, parts[i] != NULL; i++);
+    for (i = 0; i < 100 && parts[i] != NULL; i++);
     name = parts[i - 1];
 
     name = wmem_strndup(wmem_file_scope(), name, TASK_COMM_LEN - 1);

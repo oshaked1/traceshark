@@ -374,14 +374,14 @@ static int dissect_linux_trace_event(tvbuff_t *tvb, packet_info *pinfo, proto_tr
     // get PID field
     fv = traceshark_subscribed_field_get_single_value("linux_trace_event.data.common_pid");
     pid = fvalue_get_sinteger(fv);
-    dissector_data->pid.linux = pid;
+    dissector_data->pid._linux = pid;
 
     // add PID and event system and name to info column and Linux trace event item
     col_append_fstr(pinfo->cinfo, COL_INFO, ", PID = %d, %s", pid, system_and_name);
     proto_item_append_text(linux_trace_event_item, ", PID = %d, %s", pid, system_and_name);
 
     // get process info
-    dissector_data->process_info.linux = traceshark_get_linux_process_by_pid(dissector_data->machine_id, pid, &pinfo->abs_ts);
+    dissector_data->process_info._linux = traceshark_get_linux_process_by_pid(dissector_data->machine_id, pid, &pinfo->abs_ts);
 
     // call dissector for this event
     dissector_try_string(event_system_and_name_dissector_table, system_and_name, tvb, pinfo, tree, dissector_data);
