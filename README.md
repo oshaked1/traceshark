@@ -1,5 +1,7 @@
 # Traceshark
 
+:warning: This project is discontinued in favor of [Traceeshark](https://github.com/aquasecurity/traceeshark), the evolution of this project.
+
 Traceshark is a set of extensions for [Wireshark](https://www.wireshark.org/) that allows recording and analyzing system trace activity on Windows and Linux. It is essentially a multi-platform tracing framework based on Wireshark.
 
 ## Inspiration
